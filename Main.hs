@@ -35,8 +35,10 @@ type MName = String
 --
 data Expr =
      IntE Integer
+  |  BoolE Bool
   |  PlusE Expr Expr
   |  TimesE Expr Expr
+  |  IfE Expr Expr Expr
   |  VarE VName
   |  LetE VName Expr Expr
   |  NewE CName [Expr]
@@ -102,6 +104,7 @@ data Object = Object CName (Map FName Loc) (Map MName (VName,Expr))
 -- values
 -- v ∈ value ⩴ i | o
 data Value = IntV Integer
+           | BoolV Bool
            | ObjectV Object
   deriving (Eq,Ord,Show)
 
@@ -160,12 +163,17 @@ buildMethodMap (MDecl mn x e:mds) =
 
 -- interp ∈ list(cdecl) × env × store × expr ⇀ value × store
 -- interp(cds,γ,σ,i) ≜ ⟨i,σ⟩
+-- interp(cds,γ,σ,b) ≜ ⟨b,σ⟩
 -- interp(cds,γ,σ,e₁+e₂) ≜ ⟨i₁+i₂,σ″⟩
 --   where ⟨i₁,σ′⟩ = interp(cds,γ,σ,e₁)
 --   where ⟨i₂,σ″⟩ = interp(cds,γ,σ′,e₂)
 -- interp(cds,γ,σ,e₁+e₂) ≜ ⟨i₁×i₂,σ″⟩
 --   where ⟨i₁,σ′⟩ = interp(cds,γ,σ,e₁)
 --   where ⟨i₂,σ″⟩ = interp(cds,γ,σ′,e₂)
+-- interp(γ,σ,IF e₁ THEN e₂ ELSE e₃) ≜ interp(γ,σ′,e₂)
+--   when ⟨true,σ′⟩ = interp(γ,σ,e₁)
+-- interp(γ,σ,IF e₁ THEN e₂ ELSE e₃) ≜ interp(γ,σ′,e₃)
+--   when ⟨false,σ′⟩ = interp(γ,σ,e₁)
 -- interp(cds,γ,σ,x) ≜ γ(x)
 -- interp(cds,γ,σ,LET x = e₁ IN e₂) ≜ interp(cds,γ[x↦v],σ′,e₂)
 --   where ⟨v,σ′⟩ = interp(cds,γ,σ,e₁)
@@ -190,6 +198,7 @@ buildMethodMap (MDecl mn x e:mds) =
 interp :: [CDecl] -> Env -> Store -> Expr -> Maybe (Value,Store)
 interp cds env store e0 = case e0 of
   IntE i -> Just (IntV i,store)
+  BoolE b -> Just (BoolV b,store)
   PlusE e1 e2 -> case interp cds env store e1 of
     Just (IntV i1,store') -> case interp cds env store' e2 of
       Just (IntV i2,store'') -> Just (IntV (i1 + i2),store'')
@@ -199,6 +208,10 @@ interp cds env store e0 = case e0 of
     Just (IntV i1,store') -> case interp cds env store' e2 of
       Just (IntV i2,store'') -> Just (IntV (i1 * i2),store'')
       _ -> Nothing
+    _ -> Nothing
+  IfE e1 e2 e3 -> case interp cds env store e1 of
+    Just (BoolV True,store') -> interp cds env store' e2
+    Just (BoolV False,store') -> interp cds env store' e3
     _ -> Nothing
   VarE x -> case Map.lookup x env of
     Just v -> Just (v,store)
