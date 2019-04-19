@@ -41,6 +41,9 @@ data Expr =
   |  IfE Expr Expr Expr
   |  VarE VName
   |  LetE VName Expr Expr
+  |  BoxE Expr
+  |  UnboxE Expr
+  |  AssignE Expr Expr
   |  NewE CName [Expr]
   |  GetFieldE Expr FName
   |  SetFieldE Expr FName Expr
@@ -106,6 +109,7 @@ data Object = Object CName (Map FName Loc) (Map MName (VName,Expr))
 data Value = IntV Integer
            | BoolV Bool
            | ObjectV Object
+           | LocV Loc
   deriving (Eq,Ord,Show)
 
 -- locations (domain of the store)
@@ -219,6 +223,21 @@ interp cds env store e0 = case e0 of
   LetE x e1 e2 -> case interp cds env store e1 of
     Just (v,store') -> interp cds (Map.insert x v env) store' e2
     Nothing -> Nothing
+  BoxE e -> case interp cds env store e of
+    Just (v,store') ->
+      let l = freshLoc store'
+      in Just (LocV l,Map.insert l v store')
+    _ -> Nothing
+  UnboxE e -> case interp cds env store e of
+    Just (LocV l,store') -> case Map.lookup l store' of
+      Just v -> Just (v,store')
+      Nothing -> Nothing
+    _ -> Nothing
+  AssignE e1 e2 -> case interp cds env store e1 of
+    Just (LocV l,store') -> case interp cds env store' e2 of
+      Just (v,store'') -> Just (v,Map.insert l v store'')
+      _ -> Nothing
+    _ -> Nothing
   NewE cn es -> case lookupClass cds cn of
     Just (CDecl _ fns mds) -> case interpMany cds env store es of
       Just (vs,store') ->
