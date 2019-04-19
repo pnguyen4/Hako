@@ -271,7 +271,8 @@ interpTests =
   ,interp cds Map.empty Map.empty
   -- in each test: interp(e) = ⟨v,σ⟩
   --
-  ,
+  ,[
+   ]
   )
 
 ---------------
