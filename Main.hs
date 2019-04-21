@@ -290,7 +290,22 @@ interpTests =
   ,interp cds Map.empty Map.empty
   -- in each test: interp(e) = ⟨v,σ⟩
   --
-  ,
+  ,[
+    -- e = LET x = BOX 10 IN !x
+    ( LetE "x" (BoxE (IntE 10)) (VarE "x")
+    , Just (LocV 0,Map.fromList [(0,IntV 10)])
+    )
+   -- e = LET x = BOX false IN
+   --     LET y = BOX 20 IN
+   --     IF (x ← true) THEN !x ELSE (y ← 100))
+   ,( LetE "x" (BoxE (BoolE False))
+      (LetE "y" (BoxE (IntE 20))
+      (IfE (AssignE (VarE "x") (BoolE True))
+           (UnboxE (VarE "x"))
+           (AssignE (VarE "y") (IntE 100))))
+    , Just (BoolV True,Map.fromList [(0,BoolV True),(1,IntV 20)])
+    )
+   ]
   )
 
 ---------------
