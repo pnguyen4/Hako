@@ -181,6 +181,14 @@ buildMethodMap (MDecl mn x e:mds) =
 -- interp(cds,γ,σ,x) ≜ γ(x)
 -- interp(cds,γ,σ,LET x = e₁ IN e₂) ≜ interp(cds,γ[x↦v],σ′,e₂)
 --   where ⟨v,σ′⟩ = interp(cds,γ,σ,e₁)
+-- interp(γ,σ,BOX(e)) ≜ ⟨ℓ,σ′[ℓ↦v]⟩
+--   where ⟨v,σ′⟩ = interp(γ,σ,e)
+--         ℓ = fresh-loc(σ′)
+-- interp(γ,σ,!e) ≜ ⟨σ′(ℓ),σ′⟩
+--   where ⟨ℓ,σ′⟩ = interp(γ,σ,e)
+-- interp(γ,σ,e₁ ← e₂) ≜ ⟨v,σ″[ℓ↦v]⟩
+--   where ⟨ℓ,σ′⟩ = interp(γ,σ,e₁)
+--         ⟨v,σ″⟩ = interp(γ,σ′,e₂)
 -- interp(cds,γ,σ₀,NEW cn(e₁,…,eₙ)) ≜ ⟨OBJECT cn(fn₁↦ℓ₁,…,fnₘ↦ℓₘ) {mn₁↦[FUN(x₁)⇒e₁′],…,mnₙ↦[FUN(xₙ)⇒eₙ′]},σₘ[ℓ₁↦v₁,…,ℓₘ↦vₘ]
 --   where ⟨v₁,σ₁⟩ = interp(cds,γ,σ₀,e₁)
 --                 ⋮
