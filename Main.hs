@@ -44,7 +44,7 @@ data Expr =
   |  BoxE Expr
   |  UnboxE Expr
   |  AssignE Expr Expr
-  |  FunE String Expr
+  |  FunE String Type Expr
   |  AppE Expr Expr
   |  NewE CName [Expr]
   |  GetFieldE Expr FName
@@ -259,7 +259,7 @@ interp cds env store e0 = case e0 of
   LetE x e1 e2 -> case interp cds env store e1 of
     Just (v,store') -> interp cds (Map.insert x v env) store' e2
     Nothing -> Nothing
-  FunE x e -> Just (FunV env x e,store)
+  FunE x _ e -> Just (FunV env x e,store)
   AppE e1 e2 -> case (interp cds env store e1,interp cds env store e2) of
     (Just (FunV env' x e',store'),Just (v,s)) -> interp cds (Map.insert x v env') store' e'
     _ -> Nothing
