@@ -34,8 +34,8 @@ type MName = String
 --          | e.mn(e)    -- all methods take exactly one argument
 --
 data Expr =
-     IntE Integer
-  |  BoolE Bool
+     IntE Integer Label
+  |  BoolE Bool Label
   |  PlusE Expr Expr
   |  TimesE Expr Expr
   |  IfE Expr Expr Expr
@@ -46,6 +46,27 @@ data Expr =
   |  SetFieldE Expr FName Expr
   |  CallE Expr MName Expr
   deriving (Eq,Ord,Show)
+
+-- ς ∈ label ⩴ Secret
+--           | public
+data Label = Secret
+           | Public
+  deriving (Eq,Ord,Show)
+
+-- τ ∈ type ⩴ int
+--          | bool
+--          | τ ⇒ τ
+data Type = IntT
+          | BoolT
+          | ArrowT Type Type
+  deriving (Eq,Ord,Show)
+
+-- φ ∈ stype ⩴ τ:ς
+data SType = ST Type Label
+  deriving (Eq,Show)
+
+-- Γ ∈ tenv ≜ var ⇀ stype
+type TEnv = Map String SType
 
 -- A sequence expression—written as a semicolon in concrete syntax—is syntactic
 -- sugar for a let statement with a variable name that is not used
@@ -197,8 +218,8 @@ buildMethodMap (MDecl mn x e:mds) =
 
 interp :: [CDecl] -> Env -> Store -> Expr -> Maybe (Value,Store)
 interp cds env store e0 = case e0 of
-  IntE i -> Just (IntV i,store)
-  BoolE b -> Just (BoolV b,store)
+  IntE i _ -> Just (IntV i,store)
+  BoolE b _ -> Just (BoolV b,store)
   PlusE e1 e2 -> case interp cds env store e1 of
     Just (IntV i1,store') -> case interp cds env store' e2 of
       Just (IntV i2,store'') -> Just (IntV (i1 + i2),store'')
@@ -262,6 +283,31 @@ interpMany cds env store (e:es) = case interp cds env store e of
     Nothing -> Nothing
   Nothing -> Nothing
 
+-- Finds the least upper bound of two elements with respect to our security lattice
+joinLabel :: Label -> Label -> Label
+joinLabel l1 l2 = if (l1==Secret|| l2==Secret) then Secret else Public
+
+-- Finds the greatest lower bound of two elements with respect to our security lattice
+meetLabel :: Label -> Label -> Label
+meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
+
+-- Typable expressions evaluate to final type
+-- Implemented with confidentiality/secrecy in mind. Integrity is also possible
+typecheck :: TEnv -> Expr -> Maybe SType
+typecheck env e0 = case e0 of
+    IntE _ l1 -> Just (ST IntT l1)
+    BoolE _ l1 -> Just (ST BoolT l1)
+    PlusE e1 e2 -> case (typecheck env e1, typecheck env e2) of
+        (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST IntT (joinLabel l1 l2))
+        _ -> Nothing
+    IfE e1 e2 e3 -> case typecheck env e1 of
+      Just (ST BoolT l1) -> case (typecheck env e2, typecheck env e3) of
+        (Just (ST t2 l2), Just (ST t3 l3)) -> if t2==t3
+          then Just (ST t2 (joinLabel l1 (joinLabel l2 l3)))
+          else Nothing
+        _ -> Nothing
+      _ -> Nothing
+
 interpTests :: (Int,String,Expr -> Maybe (Value,Store),[(Expr,Maybe (Value,Store))])
 interpTests =
   let cds = undefined
@@ -275,13 +321,34 @@ interpTests =
    ]
   )
 
+typecheckTests :: (Int,String,Expr -> Maybe SType,[(Expr,Maybe SType)])
+typecheckTests =
+  (1
+  ,"typecheck"
+  ,typecheck Map.empty
+  ,[
+     (PlusE (IntE 1 Public) (IntE 2 Secret)
+     , Just (ST IntT Secret) -- data should be designated as secret to prevent information flow leakage
+     )
+     ,
+     (PlusE (IntE 1 Public) (BoolE True Public)
+     , Nothing -- cannot logically add bool to int
+     )
+     ,
+     (IfE (BoolE False Secret) (BoolE True Public) (IntE 10 Public)
+     , Nothing -- unpredictable final type due to branching, not typable
+     )
+   ]
+  )
+
 ---------------
 -- ALL TESTS --
 ---------------
 
 allTests :: [Test]
 allTests =
-  [ Test1 interpTests
+  [ Test1 interpTests,
+    Test1 typecheckTests
   ]
 
 ----------------------
