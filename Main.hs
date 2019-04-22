@@ -41,10 +41,10 @@ data Expr =
   |  IfE Expr Expr Expr
   |  VarE VName
   |  LetE VName Expr Expr
-  |  BoxE Expr
+  |  BoxE Expr Label
   |  UnboxE Expr
   |  AssignE Expr Expr
-  |  FunE String Expr
+  |  FunE String Expr Label
   |  AppE Expr Expr
   |  NewE CName [Expr]
   |  GetFieldE Expr FName
@@ -60,15 +60,16 @@ data Label = Secret
 
 -- τ ∈ type ⩴ int
 --          | bool
---          | τ ⇒ τ
+--          | φ ⇒ φ
 data Type = IntT
           | BoolT
-          | ArrowT Type Type
+          | ArrowT SType SType
+          | LocT SType
   deriving (Eq,Ord,Show)
 
 -- φ ∈ stype ⩴ τ:ς
 data SType = ST Type Label
-  deriving (Eq,Show)
+  deriving (Eq,Ord,Show)
 
 -- Γ ∈ tenv ≜ var ⇀ stype
 type TEnv = Map String SType
@@ -259,11 +260,11 @@ interp cds env store e0 = case e0 of
   LetE x e1 e2 -> case interp cds env store e1 of
     Just (v,store') -> interp cds (Map.insert x v env) store' e2
     Nothing -> Nothing
-  FunE x e -> Just (FunV env x e,store)
+  FunE x e _ -> Just (FunV env x e,store)
   AppE e1 e2 -> case (interp cds env store e1,interp cds env store e2) of
     (Just (FunV env' x e',store'),Just (v,s)) -> interp cds (Map.insert x v env') store' e'
     _ -> Nothing
-  BoxE e -> case interp cds env store e of
+  BoxE e _ -> case interp cds env store e of
     Just (v,store') ->
       let l = freshLoc store'
       in Just (LocV l,Map.insert l v store')
@@ -358,14 +359,14 @@ interpTests =
   --
   ,[
     -- e = LET x = BOX 10 IN !x
-    ( LetE "x" (BoxE (IntE 10 Public)) (VarE "x")
+    ( LetE "x" (BoxE (IntE 10 Public) Public) (VarE "x")
     , Just (LocV 0,Map.fromList [(0,IntV 10)])
     )
     -- e = LET x = BOX false IN
     --     LET y = BOX 20 IN
     --     IF (x ← true) THEN !x ELSE (y ← 100))
-   ,( LetE "x" (BoxE (BoolE False Public))
-      (LetE "y" (BoxE (IntE 20 Public))
+   ,( LetE "x" (BoxE (BoolE False Public) Public)
+      (LetE "y" (BoxE (IntE 20 Public) Public)
       (IfE (AssignE (VarE "x") (BoolE True Public))
            (UnboxE (VarE "x"))
            (AssignE (VarE "y") (IntE 100 Public))))
@@ -373,7 +374,7 @@ interpTests =
     )
     -- LET f = FUN (x) → x + 1 IN
     -- f(2)
-   ,( LetE "f" (FunE "x" (PlusE (IntE 1 Public) (VarE "x"))) $
+   ,( LetE "f" (FunE "x" (PlusE (IntE 1 Public) (VarE "x")) Public) $
       AppE (VarE "f") (IntE 2 Public)
       -- 3
     , Just (IntV 3,Map.empty)
