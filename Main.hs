@@ -357,23 +357,23 @@ interpTests =
   --
   ,[
     -- e = LET x = BOX 10 IN !x
-    ( LetE "x" (BoxE (IntE 10)) (VarE "x")
+    ( LetE "x" (BoxE (IntE 10 Public)) (VarE "x")
     , Just (LocV 0,Map.fromList [(0,IntV 10)])
     )
    -- e = LET x = BOX false IN
    --     LET y = BOX 20 IN
    --     IF (x ← true) THEN !x ELSE (y ← 100))
-   ,( LetE "x" (BoxE (BoolE False))
-      (LetE "y" (BoxE (IntE 20))
-      (IfE (AssignE (VarE "x") (BoolE True))
+   ,( LetE "x" (BoxE (BoolE False Public))
+      (LetE "y" (BoxE (IntE 20 Public))
+      (IfE (AssignE (VarE "x") (BoolE True Public))
            (UnboxE (VarE "x"))
-           (AssignE (VarE "y") (IntE 100))))
+           (AssignE (VarE "y") (IntE 100 Public))))
     , Just (BoolV True,Map.fromList [(0,BoolV True),(1,IntV 20)])
     )
     -- LET f = FUN (x) → x + 1 IN
     -- f(2)
-   ,( LetE "f" (FunE "x" (PlusE (IntE 1) (VarE "x"))) $
-      AppE (VarE "f") (IntE 2)
+   ,( LetE "f" (FunE "x" (PlusE (IntE 1 Public) (VarE "x"))) $
+      AppE (VarE "f") (IntE 2 Public)
       -- 3
     , Just (IntV 3,Map.empty)
     )
