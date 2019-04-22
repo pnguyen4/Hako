@@ -378,7 +378,7 @@ interpTests =
     )
     -- LET f = FUN (x) → x + 1 IN
     -- f(2)
-   ,( LetE "f" (FunE "x" (PlusE (IntE 1 Public) (VarE "x"))) $
+   ,( LetE "f" (FunE "x" IntT (PlusE (IntE 1 Public) (VarE "x"))) $
       AppE (VarE "f") (IntE 2 Public)
       -- 3
     , Just (IntV 3,Map.empty)
