@@ -41,6 +41,11 @@ data Expr =
   |  IfE Expr Expr Expr
   |  VarE VName
   |  LetE VName Expr Expr
+  |  BoxE Expr
+  |  UnboxE Expr
+  |  AssignE Expr Expr
+  |  FunE String Expr
+  |  AppE Expr Expr
   |  NewE CName [Expr]
   |  GetFieldE Expr FName
   |  SetFieldE Expr FName Expr
@@ -126,7 +131,9 @@ data Object = Object CName (Map FName Loc) (Map MName (VName,Expr))
 -- v ∈ value ⩴ i | o
 data Value = IntV Integer
            | BoolV Bool
+           | FunV Env String Expr
            | ObjectV Object
+           | LocV Loc
   deriving (Eq,Ord,Show)
 
 -- locations (domain of the store)
@@ -198,6 +205,18 @@ buildMethodMap (MDecl mn x e:mds) =
 -- interp(cds,γ,σ,x) ≜ γ(x)
 -- interp(cds,γ,σ,LET x = e₁ IN e₂) ≜ interp(cds,γ[x↦v],σ′,e₂)
 --   where ⟨v,σ′⟩ = interp(cds,γ,σ,e₁)
+-- interp(γ,FUN(x)⇒e) ≜ ⟨FUN(x)⇒e,γ⟩
+-- interp(γ,e₁(e₂)) ≜ interp(γ′[x↦v],e′)
+--   where ⟨FUN(x)⇒e′,γ′⟩ = interp(γ,e₁)
+--         v = interp(γ,e₂)
+-- interp(γ,σ,BOX(e)) ≜ ⟨ℓ,σ′[ℓ↦v]⟩
+--   where ⟨v,σ′⟩ = interp(γ,σ,e)
+--         ℓ = fresh-loc(σ′)
+-- interp(γ,σ,!e) ≜ ⟨σ′(ℓ),σ′⟩
+--   where ⟨ℓ,σ′⟩ = interp(γ,σ,e)
+-- interp(γ,σ,e₁ ← e₂) ≜ ⟨v,σ″[ℓ↦v]⟩
+--   where ⟨ℓ,σ′⟩ = interp(γ,σ,e₁)
+--         ⟨v,σ″⟩ = interp(γ,σ′,e₂)
 -- interp(cds,γ,σ₀,NEW cn(e₁,…,eₙ)) ≜ ⟨OBJECT cn(fn₁↦ℓ₁,…,fnₘ↦ℓₘ) {mn₁↦[FUN(x₁)⇒e₁′],…,mnₙ↦[FUN(xₙ)⇒eₙ′]},σₘ[ℓ₁↦v₁,…,ℓₘ↦vₘ]
 --   where ⟨v₁,σ₁⟩ = interp(cds,γ,σ₀,e₁)
 --                 ⋮
@@ -240,6 +259,25 @@ interp cds env store e0 = case e0 of
   LetE x e1 e2 -> case interp cds env store e1 of
     Just (v,store') -> interp cds (Map.insert x v env) store' e2
     Nothing -> Nothing
+  FunE x e -> Just (FunV env x e,store)
+  AppE e1 e2 -> case (interp cds env store e1,interp cds env store e2) of
+    (Just (FunV env' x e',store'),Just (v,s)) -> interp cds (Map.insert x v env') store' e'
+    _ -> Nothing
+  BoxE e -> case interp cds env store e of
+    Just (v,store') ->
+      let l = freshLoc store'
+      in Just (LocV l,Map.insert l v store')
+    _ -> Nothing
+  UnboxE e -> case interp cds env store e of
+    Just (LocV l,store') -> case Map.lookup l store' of
+      Just v -> Just (v,store')
+      Nothing -> Nothing
+    _ -> Nothing
+  AssignE e1 e2 -> case interp cds env store e1 of
+    Just (LocV l,store') -> case interp cds env store' e2 of
+      Just (v,store'') -> Just (v,Map.insert l v store'')
+      _ -> Nothing
+    _ -> Nothing
   NewE cn es -> case lookupClass cds cn of
     Just (CDecl _ fns mds) -> case interpMany cds env store es of
       Just (vs,store') ->
@@ -318,6 +356,27 @@ interpTests =
   -- in each test: interp(e) = ⟨v,σ⟩
   --
   ,[
+    -- e = LET x = BOX 10 IN !x
+    ( LetE "x" (BoxE (IntE 10)) (VarE "x")
+    , Just (LocV 0,Map.fromList [(0,IntV 10)])
+    )
+   -- e = LET x = BOX false IN
+   --     LET y = BOX 20 IN
+   --     IF (x ← true) THEN !x ELSE (y ← 100))
+   ,( LetE "x" (BoxE (BoolE False))
+      (LetE "y" (BoxE (IntE 20))
+      (IfE (AssignE (VarE "x") (BoolE True))
+           (UnboxE (VarE "x"))
+           (AssignE (VarE "y") (IntE 100))))
+    , Just (BoolV True,Map.fromList [(0,BoolV True),(1,IntV 20)])
+    )
+    -- LET f = FUN (x) → x + 1 IN
+    -- f(2)
+   ,( LetE "f" (FunE "x" (PlusE (IntE 1) (VarE "x"))) $
+      AppE (VarE "f") (IntE 2)
+      -- 3
+    , Just (IntV 3,Map.empty)
+    )
    ]
   )
 
