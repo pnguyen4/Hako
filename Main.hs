@@ -184,6 +184,10 @@ buildMethodMap (MDecl mn x e:mds) =
 -- interp(cds,γ,σ,x) ≜ γ(x)
 -- interp(cds,γ,σ,LET x = e₁ IN e₂) ≜ interp(cds,γ[x↦v],σ′,e₂)
 --   where ⟨v,σ′⟩ = interp(cds,γ,σ,e₁)
+-- interp(γ,FUN(x)⇒e) ≜ ⟨FUN(x)⇒e,γ⟩
+-- interp(γ,e₁(e₂)) ≜ interp(γ′[x↦v],e′)
+--   where ⟨FUN(x)⇒e′,γ′⟩ = interp(γ,e₁)
+--         v = interp(γ,e₂)
 -- interp(γ,σ,BOX(e)) ≜ ⟨ℓ,σ′[ℓ↦v]⟩
 --   where ⟨v,σ′⟩ = interp(γ,σ,e)
 --         ℓ = fresh-loc(σ′)
@@ -320,9 +324,11 @@ interpTests =
            (AssignE (VarE "y") (IntE 100))))
     , Just (BoolV True,Map.fromList [(0,BoolV True),(1,IntV 20)])
     )
+    -- LET f = FUN (x) → x + 1 IN
+    -- f(2)
    ,( LetE "f" (FunE "x" (PlusE (IntE 1) (VarE "x"))) $
       AppE (VarE "f") (IntE 2)
-      -- τ = int
+      -- 3
     , Just (IntV 3,Map.empty)
     )
    ]
