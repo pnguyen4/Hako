@@ -28,6 +28,11 @@ type MName = String
 -- Expressions
 -- e ∈ expr ⩴ i | e + e | e × e
 --          | x | LET x = e IN e
+--          | FUN (x:τ) ⇒ e
+--          | e(e)
+--          | BOX(e)
+--          | !e
+--          | e ← e
 --          | NEW cn(e,…,e)
 --          | e.fn
 --          | e.fn ← e
@@ -44,7 +49,7 @@ data Expr =
   |  BoxE Expr
   |  UnboxE Expr
   |  AssignE Expr Expr
-  |  FunE String Expr
+  |  FunE String Type Expr
   |  AppE Expr Expr
   |  NewE CName [Expr]
   |  GetFieldE Expr FName
@@ -259,7 +264,7 @@ interp cds env store e0 = case e0 of
   LetE x e1 e2 -> case interp cds env store e1 of
     Just (v,store') -> interp cds (Map.insert x v env) store' e2
     Nothing -> Nothing
-  FunE x e -> Just (FunV env x e,store)
+  FunE x _ e -> Just (FunV env x e,store)
   AppE e1 e2 -> case (interp cds env store e1,interp cds env store e2) of
     (Just (FunV env' x e',store'),Just (v,s)) -> interp cds (Map.insert x v env') store' e'
     _ -> Nothing
@@ -373,7 +378,7 @@ interpTests =
     )
     -- LET f = FUN (x) → x + 1 IN
     -- f(2)
-   ,( LetE "f" (FunE "x" (PlusE (IntE 1 Public) (VarE "x"))) $
+   ,( LetE "f" (FunE "x" IntT (PlusE (IntE 1 Public) (VarE "x"))) $
       AppE (VarE "f") (IntE 2 Public)
       -- 3
     , Just (IntV 3,Map.empty)
