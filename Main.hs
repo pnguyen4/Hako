@@ -333,18 +333,19 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 -- Implemented with confidentiality/secrecy in mind. Integrity is also possible
 typecheck :: TEnv -> Expr -> Maybe SType
 typecheck env e0 = case e0 of
-    IntE _ l1 -> Just (ST IntT l1)
-    BoolE _ l1 -> Just (ST BoolT l1)
-    PlusE e1 e2 -> case (typecheck env e1, typecheck env e2) of
-        (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST IntT (joinLabel l1 l2))
-        _ -> Nothing
-    IfE e1 e2 e3 -> case typecheck env e1 of
-      Just (ST BoolT l1) -> case (typecheck env e2, typecheck env e3) of
-        (Just (ST t2 l2), Just (ST t3 l3)) -> if t2==t3
-          then Just (ST t2 (joinLabel l1 (joinLabel l2 l3)))
-          else Nothing
-        _ -> Nothing
+  IntE _ l1 -> Just (ST IntT l1)
+  BoolE _ l1 -> Just (ST BoolT l1)
+  PlusE e1 e2 -> case (typecheck env e1, typecheck env e2) of
+    (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST IntT (joinLabel l1 l2))
+    _ -> Nothing
+  IfE e1 e2 e3 -> case typecheck env e1 of
+    Just (ST BoolT l1) -> case (typecheck env e2, typecheck env e3) of
+      (Just (ST t2 l2), Just (ST t3 l3)) ->
+        if t2==t3
+        then Just (ST t2 (joinLabel l1 (joinLabel l2 l3)))
+        else Nothing
       _ -> Nothing
+    _ -> Nothing
 
 interpTests :: (Int,String,Expr -> Maybe (Value,Store),[(Expr,Maybe (Value,Store))])
 interpTests =
@@ -360,9 +361,9 @@ interpTests =
     ( LetE "x" (BoxE (IntE 10 Public)) (VarE "x")
     , Just (LocV 0,Map.fromList [(0,IntV 10)])
     )
-   -- e = LET x = BOX false IN
-   --     LET y = BOX 20 IN
-   --     IF (x ← true) THEN !x ELSE (y ← 100))
+    -- e = LET x = BOX false IN
+    --     LET y = BOX 20 IN
+    --     IF (x ← true) THEN !x ELSE (y ← 100))
    ,( LetE "x" (BoxE (BoolE False Public))
       (LetE "y" (BoxE (IntE 20 Public))
       (IfE (AssignE (VarE "x") (BoolE True Public))
@@ -386,17 +387,20 @@ typecheckTests =
   ,"typecheck"
   ,typecheck Map.empty
   ,[
-     (PlusE (IntE 1 Public) (IntE 2 Secret)
-     , Just (ST IntT Secret) -- data should be designated as secret to prevent information flow leakage
-     )
-     ,
-     (PlusE (IntE 1 Public) (BoolE True Public)
-     , Nothing -- cannot logically add bool to int
-     )
-     ,
-     (IfE (BoolE False Secret) (BoolE True Public) (IntE 10 Public)
-     , Nothing -- unpredictable final type due to branching, not typable
-     )
+    -- data should be designated as secret to prevent information flow leakage
+    ( PlusE (IntE 1 Public) (IntE 2 Secret)
+    , Just (ST IntT Secret)
+    )
+    ,
+    -- cannot logically add bool to int
+    ( PlusE (IntE 1 Public) (BoolE True Public)
+    , Nothing
+    )
+    ,
+    -- unpredictable final type due to branching, not typable
+    ( IfE (BoolE False Secret) (BoolE True Public) (IntE 10 Public)
+    , Nothing
+    )
    ]
   )
 
