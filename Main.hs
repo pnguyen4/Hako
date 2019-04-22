@@ -44,6 +44,8 @@ data Expr =
   |  BoxE Expr
   |  UnboxE Expr
   |  AssignE Expr Expr
+  |  FunE String Expr
+  |  AppE Expr Expr
   |  NewE CName [Expr]
   |  GetFieldE Expr FName
   |  SetFieldE Expr FName Expr
@@ -108,6 +110,7 @@ data Object = Object CName (Map FName Loc) (Map MName (VName,Expr))
 -- v ∈ value ⩴ i | o
 data Value = IntV Integer
            | BoolV Bool
+           | FunV Env String Expr
            | ObjectV Object
            | LocV Loc
   deriving (Eq,Ord,Show)
@@ -231,6 +234,10 @@ interp cds env store e0 = case e0 of
   LetE x e1 e2 -> case interp cds env store e1 of
     Just (v,store') -> interp cds (Map.insert x v env) store' e2
     Nothing -> Nothing
+  FunE x e -> Just (FunV env x e,store)
+  AppE e1 e2 -> case (interp cds env store e1,interp cds env store e2) of
+    (Just (FunV env' x e',store'),Just (v,s)) -> interp cds (Map.insert x v env') store' e'
+    _ -> Nothing
   BoxE e -> case interp cds env store e of
     Just (v,store') ->
       let l = freshLoc store'
@@ -312,6 +319,11 @@ interpTests =
            (UnboxE (VarE "x"))
            (AssignE (VarE "y") (IntE 100))))
     , Just (BoolV True,Map.fromList [(0,BoolV True),(1,IntV 20)])
+    )
+   ,( LetE "f" (FunE "x" (PlusE (IntE 1) (VarE "x"))) $
+      AppE (VarE "f") (IntE 2)
+      -- τ = int
+    , Just (IntV 3,Map.empty)
     )
    ]
   )
