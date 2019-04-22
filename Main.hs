@@ -28,6 +28,11 @@ type MName = String
 -- Expressions
 -- e ∈ expr ⩴ i | e + e | e × e
 --          | x | LET x = e IN e
+--          | FUN (x:τ) ⇒ e
+--          | e(e)
+--          | BOX(e)
+--          | !e
+--          | e ← e
 --          | NEW cn(e,…,e)
 --          | e.fn
 --          | e.fn ← e
