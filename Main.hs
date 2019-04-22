@@ -328,15 +328,15 @@ typecheckTests =
   ,typecheck Map.empty
   ,[
      (PlusE (IntE 1 Public) (IntE 2 Secret)
-     , Just (ST IntT Secret) -- data should be designated as private because
+     , Just (ST IntT Secret) -- data should be designated as secret to prevent information flow leakage
      )
      ,
      (PlusE (IntE 1 Public) (BoolE True Public)
-     , Nothing
+     , Nothing -- cannot logically add bool to int
      )
      ,
      (IfE (BoolE False Secret) (BoolE True Public) (IntE 10 Public)
-     , Nothing
+     , Nothing -- unpredictable final type due to branching, not typable
      )
    ]
   )
