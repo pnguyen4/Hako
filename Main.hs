@@ -1,6 +1,6 @@
 {-# LANGUAGE GADTs #-} -- used in testing infrastructure
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
-module Sl07 where
+module Hako where
 
 import Data.Map (Map)
 import qualified Data.Map as Map
