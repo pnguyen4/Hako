@@ -30,6 +30,7 @@ type MName = String
 --          | x | LET x = e IN e
 --          | FUN (x:τ) ⇒ e
 --          | e(e)
+--          | WHILE(e){e}
 --          | BOX(e)
 --          | !e
 --          | e ← e
@@ -51,6 +52,7 @@ data Expr =
   |  AssignE Expr Expr
   |  FunE String Type Expr
   |  AppE Expr Expr
+  |  WhileE Expr Expr
   |  NewE CName [Expr]
   |  GetFieldE Expr FName
   |  SetFieldE Expr FName Expr
@@ -215,6 +217,11 @@ buildMethodMap (MDecl mn x e:mds) =
 -- interp(γ,e₁(e₂)) ≜ interp(γ′[x↦v],e′)
 --   where ⟨FUN(x)⇒e′,γ′⟩ = interp(γ,e₁)
 --         v = interp(γ,e₂)
+-- interp(γ,σ,WHILE(e₁){e₂}) ≜ ⟨true,σ′⟩
+--   when ⟨false,σ′⟩ = interp(γ,σ,e₁)
+-- interp(γ,σ,WHILE(e₁){e₂}) ≜ interp(γ,σ″,WHILE(e₁){e₂})
+--   when ⟨true,σ′⟩ = interp(γ,σ,e₁)
+--           ⟨v,σ″⟩ = interp(γ,σ′,e₂)
 -- interp(γ,σ,BOX(e)) ≜ ⟨ℓ,σ′[ℓ↦v]⟩
 --   where ⟨v,σ′⟩ = interp(γ,σ,e)
 --         ℓ = fresh-loc(σ′)
@@ -268,6 +275,13 @@ interp cds env store e0 = case e0 of
   FunE x _ e -> Just (FunV env x e,store)
   AppE e1 e2 -> case (interp cds env store e1,interp cds env store e2) of
     (Just (FunV env' x e',store'),Just (v,s)) -> interp cds (Map.insert x v env') store' e'
+    _ -> Nothing
+  WhileE e1 e2 -> case interp cds env store e1 of
+    Just (BoolV b,store') -> if b
+                             then case interp cds env store' e2 of
+                               Just (v,store'') -> interp cds env store'' (WhileE e1 e2)
+                               _ -> Nothing
+                             else Just (BoolV True,store')
     _ -> Nothing
   BoxE e _ -> case interp cds env store e of
     Just (v,store') ->
@@ -383,6 +397,17 @@ interpTests =
       AppE (VarE "f") (IntE 2 Public)
       -- 3
     , Just (IntV 3,Map.empty)
+    )
+    -- LET b1 = BOX true IN
+    -- LET b2 = BOX 3 IN
+    -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
+   ,( LetE "b1" (BoxE (BoolE True Public) Public) $
+      LetE "b2" (BoxE (IntE 3 Public) Public) $
+      WhileE (UnboxE (VarE "b1")) $
+        seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
+        AssignE (VarE "b1") (BoolE False Public)
+      -- True
+    , Just (BoolV True,Map.fromList [(0,BoolV False),(1,IntV 9)])
     )
    ]
   )
