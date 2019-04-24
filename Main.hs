@@ -401,10 +401,10 @@ interpTests =
     -- LET b1 = BOX true IN
     -- LET b2 = BOX 3 IN
     -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
-   ,( LetE "b1" (BoxE (BoolE True Public)) $
-      LetE "b2" (BoxE (IntE 3 Public)) $
+   ,( LetE "b1" (BoxE (BoolE True Public) Public) $
+      LetE "b2" (BoxE (IntE 3 Public) Public) $
       WhileE (UnboxE (VarE "b1")) $
-        LetE "_" (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
+        seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
         AssignE (VarE "b1") (BoolE False Public)
       -- True
     , Just (BoolV True,Map.fromList [(0,BoolV False),(1,IntV 9)])
