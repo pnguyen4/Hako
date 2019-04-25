@@ -50,7 +50,7 @@ data Expr =
   |  BoxE Expr Label
   |  UnboxE Expr
   |  AssignE Expr Expr
-  |  FunE String Type Expr
+  |  FunE String SType Expr
   |  AppE Expr Expr
   |  WhileE Expr Expr
   |  NewE CName [Expr]
@@ -352,6 +352,7 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 
 -- Typable expressions evaluate to final type
 -- Implemented with confidentiality/secrecy in mind. Integrity is also possible
+
 -- typecheck ∈ tenv × expr ⇀ stype
 --
 --   -----------
@@ -392,24 +393,22 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 --   Γ ⊢ e₁ ← e₂ : τ·ς₂
 --
 --   Γ(x) = τ·ς
---   ----------------
+--   --------------
 --   Γ ⊢ x : τ·ς
-
-{-
+--
 --   Γ ⊢ e₁ : τ₁
 --   Γ[x↦τ₁] ⊢ e₂ : τ₂
---   -----------------------
+--   -------------------------
 --   Γ ⊢ LET x = e₁ IN e₂ : τ₂
 --
---   Γ[x↦τ₁] ⊢ e : τ₂
---   --------------------
---   Γ ⊢ e : τ₁ ⇒ τ₂
+--   Γ[x↦φ₁] ⊢ e : φ₂
+--   ---------------------------
+--   Γ ⊢ FUN x ⇒ e : (φ₁ ⇒ φ₂)·⊥
 --
---   Γ ⊢ e₁ : τ₁ ⇒ τ₂
---   Γ ⊢ e₂ : τ₁
+--   Γ ⊢ e₁ : (φ ⇒ τ₂·ς₂)·ς₁)
+--   Γ ⊢ e₂ : φ
 --   ------------------
---   Γ ⊢ e₁(e₂) : τ₂
--}
+--   Γ ⊢ e₁(e₂) : τ₂·(ς₁ V ς₂)
 
 typecheck :: TEnv -> Expr -> Maybe SType
 typecheck env e0 = case e0 of
@@ -444,6 +443,9 @@ typecheck env e0 = case e0 of
       _ -> Nothing
     _ -> Nothing
   VarE x -> Map.lookup x env
+  FunE x t e -> case typecheck (Map.insert x t env) e of
+    Just t' -> Just (ST (ArrowT t t') Public)
+    Nothing -> Nothing
 --  WhileE e1 e2 -> case typecheck env e1 of
 --    Just (ST BoolT l1) -> case typecheck env e2 of
 --    _ -> Nothing
@@ -474,7 +476,7 @@ interpTests =
     )
     -- LET f = FUN (x) → x + 1 IN
     -- f(2)
-   ,( LetE "f" (FunE "x" IntT (PlusE (IntE 1) (VarE "x"))) $
+   ,( LetE "f" (FunE "x" (ST IntT Public) (PlusE (IntE 1) (VarE "x"))) $
       AppE (VarE "f") (IntE 2)
       -- 3
     , Just (IntV 3,Map.empty)
