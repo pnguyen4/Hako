@@ -61,8 +61,8 @@ data Expr =
 
 -- ς ∈ label ⩴ Secret
 --           | Public
-data Label = Secret
-           | Public
+data Label = Public
+           | Secret
   deriving (Eq,Ord,Show)
 
 -- τ ∈ type ⩴ int
@@ -372,6 +372,14 @@ typecheck env e0 = case e0 of
   UnboxE e1 -> case typecheck env e1 of
     Just (ST (LocT (ST t1 l1)) Public) -> Just (ST t1 l1)
     _ -> Nothing
+  AssignE e1 e2 -> case typecheck env e1 of
+    Just (ST (LocT (ST t1 l1)) Public) -> case typecheck env e2 of
+      Just (ST t2 l2) ->
+        if (t1==t2 && l1 >= l2)
+        then Just (ST t2 l2)
+        else Nothing
+      _ -> Nothing
+    _ -> Nothing
 
 interpTests :: (Int,String,Expr -> Maybe (Value,Store),[(Expr,Maybe (Value,Store))])
 interpTests =
@@ -436,6 +444,11 @@ typecheckTests =
     ,
     -- Unpredictable final type due to branching, not typable. Nothing to really do with security.
     ( IfE (BoolE False) (BoolE True) (IntE 10)
+    , Nothing
+    )
+    ,
+    --
+    ( AssignE (BoxE (IntE 0) Public) (UnboxE (BoxE (IntE 1) Secret))
     , Nothing
     )
    ]
