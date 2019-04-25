@@ -40,8 +40,8 @@ type MName = String
 --          | e.mn(e)    -- all methods take exactly one argument
 --
 data Expr =
-     IntE Integer Label
-  |  BoolE Bool Label
+     IntE Integer
+  |  BoolE Bool
   |  PlusE Expr Expr
   |  TimesE Expr Expr
   |  IfE Expr Expr Expr
@@ -60,7 +60,7 @@ data Expr =
   deriving (Eq,Ord,Show)
 
 -- ς ∈ label ⩴ Secret
---           | public
+--           | Public
 data Label = Secret
            | Public
   deriving (Eq,Ord,Show)
@@ -250,8 +250,8 @@ buildMethodMap (MDecl mn x e:mds) =
 
 interp :: [CDecl] -> Env -> Store -> Expr -> Maybe (Value,Store)
 interp cds env store e0 = case e0 of
-  IntE i _ -> Just (IntV i,store)
-  BoolE b _ -> Just (BoolV b,store)
+  IntE i -> Just (IntV i,store)
+  BoolE b -> Just (BoolV b,store)
   PlusE e1 e2 -> case interp cds env store e1 of
     Just (IntV i1,store') -> case interp cds env store' e2 of
       Just (IntV i2,store'') -> Just (IntV (i1 + i2),store'')
@@ -353,8 +353,8 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 -- Implemented with confidentiality/secrecy in mind. Integrity is also possible
 typecheck :: TEnv -> Expr -> Maybe SType
 typecheck env e0 = case e0 of
-  IntE _ l1 -> Just (ST IntT l1)
-  BoolE _ l1 -> Just (ST BoolT l1)
+  IntE i -> Just (ST IntT Public)
+  BoolE b -> Just (ST BoolT Public)
   PlusE e1 e2 -> case (typecheck env e1, typecheck env e2) of
     (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST IntT (joinLabel l1 l2))
     _ -> Nothing
@@ -365,6 +365,12 @@ typecheck env e0 = case e0 of
         then Just (ST t2 (joinLabel l1 (joinLabel l2 l3)))
         else Nothing
       _ -> Nothing
+    _ -> Nothing
+  BoxE e1 l1 -> case typecheck env e1 of
+    Just (ST t2 l2) -> Just (ST (LocT (ST t2 l1)) Public)
+    _ -> Nothing
+  UnboxE e1 -> case typecheck env e1 of
+    Just (ST (LocT (ST t1 l1)) Public) -> Just (ST t1 l1)
     _ -> Nothing
 
 interpTests :: (Int,String,Expr -> Maybe (Value,Store),[(Expr,Maybe (Value,Store))])
@@ -378,34 +384,34 @@ interpTests =
   --
   ,[
     -- e = LET x = BOX 10 IN !x
-    ( LetE "x" (BoxE (IntE 10 Public) Public) (VarE "x")
+    ( LetE "x" (BoxE (IntE 10) Public) (VarE "x")
     , Just (LocV 0,Map.fromList [(0,IntV 10)])
     )
     -- e = LET x = BOX false IN
     --     LET y = BOX 20 IN
     --     IF (x ← true) THEN !x ELSE (y ← 100))
-   ,( LetE "x" (BoxE (BoolE False Public) Public)
-      (LetE "y" (BoxE (IntE 20 Public) Public)
-      (IfE (AssignE (VarE "x") (BoolE True Public))
+   ,( LetE "x" (BoxE (BoolE False) Public)
+      (LetE "y" (BoxE (IntE 20) Public)
+      (IfE (AssignE (VarE "x") (BoolE True))
            (UnboxE (VarE "x"))
-           (AssignE (VarE "y") (IntE 100 Public))))
+           (AssignE (VarE "y") (IntE 100))))
     , Just (BoolV True,Map.fromList [(0,BoolV True),(1,IntV 20)])
     )
     -- LET f = FUN (x) → x + 1 IN
     -- f(2)
-   ,( LetE "f" (FunE "x" IntT (PlusE (IntE 1 Public) (VarE "x"))) $
-      AppE (VarE "f") (IntE 2 Public)
+   ,( LetE "f" (FunE "x" IntT (PlusE (IntE 1) (VarE "x"))) $
+      AppE (VarE "f") (IntE 2)
       -- 3
     , Just (IntV 3,Map.empty)
     )
     -- LET b1 = BOX true IN
     -- LET b2 = BOX 3 IN
     -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
-   ,( LetE "b1" (BoxE (BoolE True Public) Public) $
-      LetE "b2" (BoxE (IntE 3 Public) Public) $
+   ,( LetE "b1" (BoxE (BoolE True) Public) $
+      LetE "b2" (BoxE (IntE 3) Public) $
       WhileE (UnboxE (VarE "b1")) $
         seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
-        AssignE (VarE "b1") (BoolE False Public)
+        AssignE (VarE "b1") (BoolE False)
       -- True
     , Just (BoolV True,Map.fromList [(0,BoolV False),(1,IntV 9)])
     )
@@ -419,17 +425,17 @@ typecheckTests =
   ,typecheck Map.empty
   ,[
     -- data should be designated as secret to prevent information flow leakage
-    ( PlusE (IntE 1 Public) (IntE 2 Secret)
+    ( PlusE (UnboxE (BoxE (IntE 10) Secret)) (IntE 10)
     , Just (ST IntT Secret)
     )
     ,
-    -- cannot logically add bool to int
-    ( PlusE (IntE 1 Public) (BoolE True Public)
+    -- Cannot logically add bool to int. Nothing really to do with security.
+    ( PlusE (IntE 1) (BoolE True)
     , Nothing
     )
     ,
-    -- unpredictable final type due to branching, not typable
-    ( IfE (BoolE False Secret) (BoolE True Public) (IntE 10 Public)
+    -- Unpredictable final type due to branching, not typable. Nothing to really do with security.
+    ( IfE (BoolE False) (BoolE True) (IntE 10)
     , Nothing
     )
    ]
