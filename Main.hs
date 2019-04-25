@@ -68,13 +68,14 @@ data Label = Public
 -- τ ∈ type ⩴ int
 --          | bool
 --          | φ ⇒ φ
+--          | ref φ
 data Type = IntT
           | BoolT
           | ArrowT SType SType
-          | LocT SType
+          | RefT SType
   deriving (Eq,Ord,Show)
 
--- φ ∈ stype ⩴ τ:ς
+-- φ ∈ stype ⩴ τ·ς
 data SType = ST Type Label
   deriving (Eq,Ord,Show)
 
@@ -351,11 +352,73 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 
 -- Typable expressions evaluate to final type
 -- Implemented with confidentiality/secrecy in mind. Integrity is also possible
+-- typecheck ∈ tenv × expr ⇀ stype
+--
+--   -----------
+--   Γ ⊢ i : int·⊥
+--
+--   Γ ⊢ e₁ : int·ς₁
+--   Γ ⊢ e₂ : int·ς₂
+--   ------------
+--   Γ ⊢ e₁ + e₂ : int·(ς₁ V ς₂)
+
+--   Γ ⊢ e₁ : int·ς₁
+--   Γ ⊢ e₂ : int·ς₂
+--   ------------
+--   Γ ⊢ e₁ * e₂ : int·(ς₁ V ς₂)
+--
+--   -----------
+--   Γ ⊢ b : bool·⊥
+--
+--   Γ ⊢ e₁ : bool·ς₁
+--   Γ ⊢ e₂ : τ·ς₂
+--   Γ ⊢ e₃ : τ·ς₃
+--   --------------------------------
+--   Γ ⊢ IF e₁ THEN e₂ ELSE e₃ : τ·(ς₁ V ς₂ V ς₃)
+--
+--   NOTE: Tenv 'extension' comes from label from BoxE expr.
+--   Γ[x ↦ _·ς₁] ⊢ e : τ·ς₂
+--   ------------------------
+--   Γ ⊢ BOX e : ref(τ·ς₁)·⊥
+--
+--   Γ ⊢ e : ref(τ·ς₁)·ς₂
+--   -------------
+--   Γ ⊢ !e : τ·(ς₁ V ς₂)
+--
+--   Γ ⊢ e₁ : ref(τ·ς₁)·ς
+--   Γ ⊢ e₂ : τ·ς₂
+--   ς₂ ≼ ς₁
+--   --------------
+--   Γ ⊢ e₁ ← e₂ : τ·ς₂
+--
+--   Γ(x) = τ·ς
+--   ----------------
+--   Γ ⊢ x : τ·ς
+
+{-
+--   Γ ⊢ e₁ : τ₁
+--   Γ[x↦τ₁] ⊢ e₂ : τ₂
+--   -----------------------
+--   Γ ⊢ LET x = e₁ IN e₂ : τ₂
+--
+--   Γ[x↦τ₁] ⊢ e : τ₂
+--   --------------------
+--   Γ ⊢ e : τ₁ ⇒ τ₂
+--
+--   Γ ⊢ e₁ : τ₁ ⇒ τ₂
+--   Γ ⊢ e₂ : τ₁
+--   ------------------
+--   Γ ⊢ e₁(e₂) : τ₂
+-}
+
 typecheck :: TEnv -> Expr -> Maybe SType
 typecheck env e0 = case e0 of
   IntE i -> Just (ST IntT Public)
   BoolE b -> Just (ST BoolT Public)
   PlusE e1 e2 -> case (typecheck env e1, typecheck env e2) of
+    (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST IntT (joinLabel l1 l2))
+    _ -> Nothing
+  TimesE e1 e2 -> case (typecheck env e1, typecheck env e2) of
     (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST IntT (joinLabel l1 l2))
     _ -> Nothing
   IfE e1 e2 e3 -> case typecheck env e1 of
@@ -367,19 +430,23 @@ typecheck env e0 = case e0 of
       _ -> Nothing
     _ -> Nothing
   BoxE e1 l1 -> case typecheck env e1 of
-    Just (ST t2 l2) -> Just (ST (LocT (ST t2 l1)) Public)
+    Just (ST t2 l2) -> Just (ST (RefT (ST t2 l1)) Public)
     _ -> Nothing
   UnboxE e1 -> case typecheck env e1 of
-    Just (ST (LocT (ST t1 l1)) Public) -> Just (ST t1 l1)
+    Just (ST (RefT (ST t1 l1)) Public) -> Just (ST t1 l1)
     _ -> Nothing
   AssignE e1 e2 -> case typecheck env e1 of
-    Just (ST (LocT (ST t1 l1)) Public) -> case typecheck env e2 of
+    Just (ST (RefT (ST t1 l1)) Public) -> case typecheck env e2 of
       Just (ST t2 l2) ->
         if (t1==t2 && l1 >= l2)
         then Just (ST t2 l2)
         else Nothing
       _ -> Nothing
     _ -> Nothing
+  VarE x -> Map.lookup x env
+--  WhileE e1 e2 -> case typecheck env e1 of
+--    Just (ST BoolT l1) -> case typecheck env e2 of
+--    _ -> Nothing
 
 interpTests :: (Int,String,Expr -> Maybe (Value,Store),[(Expr,Maybe (Value,Store))])
 interpTests =
@@ -447,7 +514,7 @@ typecheckTests =
     , Nothing
     )
     ,
-    --
+    -- Direct Flow of Secret Data to Public Location. Obvious example of bad security.
     ( AssignE (BoxE (IntE 0) Public) (UnboxE (BoxE (IntE 1) Secret))
     , Nothing
     )
