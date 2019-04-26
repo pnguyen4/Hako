@@ -502,21 +502,26 @@ typecheckTests =
   ,typecheck Map.empty
   ,[
     -- data should be designated as secret to prevent information flow leakage
+    -- !(Box:Secret 10) + 10
     ( PlusE (UnboxE (BoxE (IntE 10) Secret)) (IntE 10)
+    -- Int, Secret
     , Just (ST IntT Secret)
     )
     ,
     -- Cannot logically add bool to int. Nothing really to do with security.
+    -- 1 + True
     ( PlusE (IntE 1) (BoolE True)
     , Nothing
     )
     ,
     -- Unpredictable final type due to branching, not typable. Nothing to really do with security.
+    -- IF False THEN True ELSE 10
     ( IfE (BoolE False) (BoolE True) (IntE 10)
     , Nothing
     )
     ,
     -- Direct Flow of Secret Data to Public Location. Obvious example of bad security.
+    -- (Box:Public 0) := !(Box:Secret 1)
     ( AssignE (BoxE (IntE 0) Public) (UnboxE (BoxE (IntE 1) Secret))
     , Nothing
     )
