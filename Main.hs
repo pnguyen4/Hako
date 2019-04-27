@@ -410,6 +410,7 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 --   ------------------
 --   Γ ⊢ e₁(e₂) : τ₂·(ς₁ V ς₂)
 
+
 typecheck :: TEnv -> Expr -> Maybe SType
 typecheck env e0 = case e0 of
   IntE i -> Just (ST IntT Public)
@@ -428,6 +429,19 @@ typecheck env e0 = case e0 of
         else Nothing
       _ -> Nothing
     _ -> Nothing
+  VarE x -> Map.lookup x env
+  LetE x e1 e2 -> case typecheck env e1 of
+    Just t1 -> typecheck (Map.insert x t1 env) e2
+    _ -> Nothing
+  FunE x t e -> case typecheck (Map.insert x t env) e of
+    Just t' -> Just (ST (ArrowT t t') Public)
+    Nothing -> Nothing
+  AppE e1 e2 -> case (typecheck env e1, typecheck env e2) of
+    (Just (ST (ArrowT s1 (ST t1 l1)) l2), Just s2) ->
+      if s1==s2
+      then Just (ST t1 (joinLabel l1 l2))
+      else Nothing
+    _ -> Nothing
   BoxE e1 l1 -> case typecheck env e1 of
     Just (ST t2 l2) -> Just (ST (RefT (ST t2 l1)) Public)
     _ -> Nothing
@@ -442,10 +456,6 @@ typecheck env e0 = case e0 of
         else Nothing
       _ -> Nothing
     _ -> Nothing
-  VarE x -> Map.lookup x env
-  FunE x t e -> case typecheck (Map.insert x t env) e of
-    Just t' -> Just (ST (ArrowT t t') Public)
-    Nothing -> Nothing
 --  WhileE e1 e2 -> case typecheck env e1 of
 --    Just (ST BoolT l1) -> case typecheck env e2 of
 --    _ -> Nothing
@@ -525,7 +535,16 @@ typecheckTests =
     ( AssignE (BoxE (IntE 0) Public) (UnboxE (BoxE (IntE 1) Secret))
     , Nothing
     )
-   ]
+    ,
+    -- Basic function application type checking, plus let
+    -- let f = (fun x:int,pub -> x + 10) in f(2)
+    ( LetE "f" (FunE "x" (ST IntT Public) (PlusE (VarE "x") (IntE 10))) (AppE (VarE "f") (IntE 2))
+    , Just (ST IntT Public)
+    )
+    ,
+    -- Same as above, but with type mismatch
+    -- let f = (fun x:int,pub -> x + 10) in f(false)
+    ( LetE "f" (FunE "x" (ST IntT Public) (PlusE (VarE "x") (IntE 10))) (AppE (VarE "f") (BoolE False)) , Nothing) ]
   )
 
 ---------------
