@@ -299,17 +299,11 @@ interp cds env store e0 = case e0 of
       _ -> Nothing
     _ -> Nothing
   NewE cn es -> case lookupClass cds cn of
-    Just (CDecl _ cns fns mds) -> case initMany cds env store cns es of
-      Just (es',os,store') -> case interpMany cds env store' es' of
-        Just (vs,store'') ->
-          let (ls,store''') = allocMany store'' vs
-              mm = buildMethodMap mds
-          in case buildFieldMap fns ls of
-            Just fm -> Just (ObjectV (Object cn os fm mm),store''')
-            Nothing -> Nothing
-        Nothing -> Nothing
+    Just cd @ (CDecl _ pns fns mds) -> case initMany cds env store pns es of
+      Just (res,ps,store') -> case new cds env store' cd res of
+        Just (ObjectV (Object _ _ fm mm),store'') -> Just (ObjectV (Object cn ps fm mm),store'')
+        _ -> Nothing
       Nothing -> Nothing
-    Nothing -> Nothing
     Nothing -> Nothing
   GetFieldE e fn -> case interp cds env store e of
     Just (ObjectV (Object _ os fm _),store') -> case Map.lookup fn fm of
@@ -346,19 +340,33 @@ interpMany cds env store (e:es) = case interp cds env store e of
     Nothing -> Nothing
   Nothing -> Nothing
 
+-- Create values in the store.
+new :: [CDecl] -> Env -> Store -> CDecl -> [Expr] -> Maybe (Value,Store)
+new cds env store (CDecl cn pns fns mds) es = case interpMany cds env store es of
+  Just (vs,store') ->
+    let (ls,store'') = allocMany store' vs
+        mm = buildMethodMap mds
+    in case buildFieldMap fns ls of
+      Just fm -> Just (ObjectV (Object cn [] fm mm),store'')
+      Nothing -> Nothing
+  Nothing -> Nothing
+
 -- Create objects given a list of class names and expressions. May return a
 -- store and uninterpreted expressions.
 initMany :: [CDecl] -> Env -> Store -> [CName] -> [Expr] -> Maybe ([Expr],[Object],Store)
-initMany cds env store [] [] = Just ([],[],store)
 initMany cds env store [] es = Just (es,[],store)
 initMany cds env store (_:_) [] = Nothing
 initMany cds env store (cn:cns) es = case lookupClass cds cn of
-  Just (CDecl _ _ fns _) -> case buildExprList fns es of
-    Just (es', es'') -> case interp cds env store (NewE cn es') of
-      Just (ObjectV o,store') -> case initMany cds env store' cns es'' of
-        Just (es''',pos,store'') -> Just (es''',(o:pos),store'')
-        Nothing -> Nothing
-      _ -> Nothing
+  Just cd @ (CDecl _ pns fns _) -> case initMany cds env store pns es of
+    Just (res,ps,store') -> case buildExprList fns res of
+      Just (es',res') -> case new cds env store' cd es' of
+        Just (ObjectV (Object _ _ fm mm),store'') ->
+          let o = Object cn ps fm mm
+          in case initMany cds env store cns res' of
+            Just (res'',mps,store''') -> Just (res',o:mps,store'')
+            _ -> Nothing
+        _ -> Nothing
+      Nothing -> Nothing
     Nothing -> Nothing
   Nothing -> Nothing
 
@@ -372,7 +380,6 @@ mapParents env (o @ (Object cn _ _ _):os) =
 -- list. Returns a tuple of expressions: the first is the corresponding
 -- expressions, the second being the unmatched expressions.
 buildExprList :: [FName] -> [Expr] -> Maybe ([Expr],[Expr])
-buildExprList [] [] = Just ([],[])
 buildExprList [] es = Just ([],es)
 buildExprList (_:_) [] = Nothing
 buildExprList (fn:fns) (e:es) = case buildExprList fns es of
@@ -435,7 +442,7 @@ interpTests =
                 , MDecl "toInt" "_" (PlusE (GetFieldE (VarE "this") "hash")
                                            (GetFieldE (VarE "this") "hash"))
                 ]
-        , CDecl "Boolable" []
+        , CDecl "IBool" []
                 ["b"]
                 [ MDecl "getB" "_" (GetFieldE (VarE "this") "b")
                 , MDecl "setB" "b" (SetFieldE (VarE "this") "b" (VarE "b"))
@@ -512,34 +519,34 @@ interpTests =
       -- True
     , Just (BoolV True,Map.fromList [(0,BoolV False),(1,IntV 9)])
     )
-   , -- LET p = new Point3D(2,3,4) IN
+   , -- LET p = new Point3D(0,2,3,4) IN
      -- p.mdist(0)
-    ( LetE "p" (NewE "Point3D" [IntE 2 Public,IntE 3 Public,IntE 4 Public]) $
+    ( LetE "p" (NewE "Point3D" [IntE 0 Public,IntE 2 Public,IntE 3 Public,IntE 4 Public]) $
       CallE (VarE "p") "mdist" (IntE 0 Public)
-      -- ⟨v,σ⟩ = ⟨9,{0↦2,1↦3,2↦4}⟩
-    , Just (IntV 9,Map.fromList [(0,IntV 2),(1,IntV 3),(2,IntV 4)])
+      -- ⟨v,σ⟩ = ⟨9,{0↦0,1↦2,2↦3,3↦4}⟩
+    , Just (IntV 9,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,IntV 4)])
     )
    , -- LET p = new Point3D(2,3,4) IN
      -- p.mdist2(0)
-    ( LetE "p" (NewE "Point3D" [IntE 2 Public,IntE 3 Public,IntE 4 Public]) $
+    ( LetE "p" (NewE "Point3D" [IntE 0 Public,IntE 2 Public,IntE 3 Public,IntE 4 Public]) $
       CallE (VarE "p") "mdist2" (IntE 0 Public)
-      -- ⟨v,σ⟩ = ⟨9,{0↦2,1↦3,2↦4}⟩
-    , Just (IntV 9,Map.fromList [(0,IntV 2),(1,IntV 3),(2,IntV 4)])
+      -- ⟨v,σ⟩ = ⟨9,{0↦0,1↦2,2↦3,3↦4}⟩
+    , Just (IntV 9,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,IntV 4)])
     )
-   , -- LET p = new Point3D(2,3,4) IN
+   , -- LET p = new Point3D(0,2,3,4) IN
      -- p.getX(0)
-    ( LetE "p" (NewE "Point3D" [IntE 10 Public,IntE 2 Public,IntE 3 Public,IntE 4 Public]) $
+    ( LetE "p" (NewE "Point3D" [IntE 0 Public,IntE 2 Public,IntE 3 Public,IntE 4 Public]) $
       (CallE (VarE "p") "getX" (IntE 0 Public))
       -- ⟨v,σ⟩ = ⟨2,{0↦2,1↦3,2↦4}⟩
-    , Just (IntV 2,Map.fromList [(0,IntV 2),(1,IntV 3),(2,IntV 4)])
+    , Just (IntV 2,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,IntV 4)])
     )
-   , -- LET p = new Point3D(2,3,4) IN
+   , -- LET p = new Point3D(0,2,3,4) IN
      -- p.x ← 10
      -- p.x
-    ( LetE "p" (NewE "Point3D" [IntE 107 Public,IntE 2 Public,IntE 3 Public,IntE 4 Public]) $
+    ( LetE "p" (NewE "Point3D" [IntE 0 Public,IntE 2 Public,IntE 3 Public,IntE 4 Public]) $
       seqE (SetFieldE (VarE "p") "x" (IntE 10 Public)) (GetFieldE (VarE "p") "x")
       -- ⟨v,σ⟩ = ⟨10,{0↦10,1↦3,2↦4}⟩
-    , Just (IntV 10,Map.fromList [(0,IntV 10),(1,IntV 3),(2,IntV 4)])
+    , Just (IntV 10,Map.fromList [(0,IntV 0),(1,IntV 10),(2,IntV 3),(3,IntV 4)])
     )
    ]
   )
