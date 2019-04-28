@@ -323,9 +323,14 @@ interp cds env store e0 = case e0 of
     Just (ObjectV (Object cn os fm mm),store') -> case interp cds env store' e2 of
       Just (v,store'') -> case Map.lookup mn mm of
         Just (x,e) ->
-          let env' = Map.fromList [("this",ObjectV (Object cn os fm mm)), (x,v)]
+          let env' = mapParents (Map.fromList [("this",ObjectV (Object cn os fm mm)), (x,v)]) os
           in case os of
-            o':_ -> interp cds (Map.insert "super" (ObjectV o') (mapParents env' os)) store'' e
+            o':os' -> case interp cds (Map.insert "super" (ObjectV o') env') store'' e of
+              Just (v,store''') -> Just (v,store''')
+              Nothing -> case os' of
+                o'':_ ->
+                  interp cds (Map.insert "super" (ObjectV o'') env') store'' e
+                _ -> Nothing
             [] -> interp cds env' store'' e
         Nothing -> dispatch cds env store'' os e0
       Nothing -> Nothing
@@ -362,8 +367,8 @@ initMany cds env store (cn:cns) es = case lookupClass cds cn of
       Just (es',res') -> case new cds env store' cd es' of
         Just (ObjectV (Object _ _ fm mm),store'') ->
           let o = Object cn ps fm mm
-          in case initMany cds env store cns res' of
-            Just (res'',mps,store''') -> Just (res',o:mps,store'')
+          in case initMany cds env store'' cns res' of
+            Just (res'',mps,store''') -> Just (res'',o:mps,store''')
             _ -> Nothing
         _ -> Nothing
       Nothing -> Nothing
@@ -442,7 +447,12 @@ interpTests =
                 , MDecl "toInt" "_" (PlusE (GetFieldE (VarE "this") "hash")
                                            (GetFieldE (VarE "this") "hash"))
                 ]
-        , CDecl "IBool" []
+        -- CLASS ABool
+        --   FIELDS hash
+        --   ~
+        --   METHOD getHash(_) ⇒ this.hash
+        --   METHOD mdist(_) ⇒ this.hash + this.hash
+        , CDecl "ABool" []
                 ["b"]
                 [ MDecl "getB" "_" (GetFieldE (VarE "this") "b")
                 , MDecl "setB" "b" (SetFieldE (VarE "this") "b" (VarE "b"))
@@ -478,6 +488,22 @@ interpTests =
                                            (CallE (VarE "this") "getZ" (IntE 4 Public)))
                 , MDecl "mdist2" "_" (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3 Public))
                                             (CallE (VarE "this") "getZ" (IntE 4 Public)))
+                ]
+        -- CLASS Point3DBool EXTENDS Point2D,IBool
+        --   FIELDS z
+        --   ~
+        --   METHOD getZ(_) ⇒ this.z
+        --   METHOD setZ(z) ⇒ this.z ← z
+        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0) 
+        --   METHOD getNotB(_) ⇒ LET b = IBool.getB IN IF b THEN False Else True
+        , CDecl "Point3DBool" ["Point2D", "ABool"]
+                ["z"]
+                [ MDecl "getZ" "_" (GetFieldE (VarE "this") "z")
+                , MDecl "setZ" "z" (SetFieldE (VarE "this") "z" (VarE "z"))
+                , MDecl "mdist" "_" (PlusE (CallE (VarE "super") "mdist" (IntE 3 Public))
+                                           (CallE (VarE "this") "getZ" (IntE 4 Public)))
+                , MDecl "getNotB" "_" (LetE "b" (CallE (VarE "super") "getB" (IntE 0 Public))
+                                                (IfE (VarE "b") (BoolE False Public) (BoolE True Public)))
                 ]
         ]
   in
@@ -547,6 +573,22 @@ interpTests =
       seqE (SetFieldE (VarE "p") "x" (IntE 10 Public)) (GetFieldE (VarE "p") "x")
       -- ⟨v,σ⟩ = ⟨10,{0↦10,1↦3,2↦4}⟩
     , Just (IntV 10,Map.fromList [(0,IntV 0),(1,IntV 10),(2,IntV 3),(3,IntV 4)])
+    )
+   , -- LET p = new Point3DBool(0,2,3,True,4) IN
+     -- p.x ← 10
+     -- p.x
+    ( LetE "p" (NewE "Point3DBool" [IntE 0 Public,IntE 2 Public,IntE 3 Public,BoolE True Public,IntE 4 Public]) $
+      CallE (VarE "p") "getB" (IntE 0 Public)
+      -- ⟨v,σ⟩ = ⟨10,{0↦10,1↦3,2↦4}⟩
+    , Just (BoolV True,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,BoolV True),(4,IntV 4)])
+    )
+   , -- LET p = new Point3DBool(0,2,3,True,4) IN
+     -- p.x ← 10
+     -- p.x
+    ( LetE "p" (NewE "Point3DBool" [IntE 0 Public,IntE 2 Public,IntE 3 Public,BoolE True Public,IntE 4 Public]) $
+      CallE (VarE "p") "getNotB" (IntE 0 Public)
+      -- ⟨v,σ⟩ = ⟨10,{0↦10,1↦3,2↦4}⟩
+    , Just (BoolV False,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,BoolV True),(4,IntV 4)])
     )
    ]
   )
