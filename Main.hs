@@ -578,6 +578,18 @@ typecheck cds env e0 = case e0 of
         else Nothing
       _ -> Nothing
     _ -> Nothing
+  LtE e1 e2 -> case (typecheck cds env e1, typecheck cds env e2) of
+    (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST BoolT (joinLabel l1 l2))
+    _ -> Nothing
+  GtE e1 e2 -> case (typecheck cds env e1, typecheck cds env e2) of
+    (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST BoolT (joinLabel l1 l2))
+    _ -> Nothing
+  EqE e1 e2 -> case (typecheck cds env e1, typecheck cds env e2) of
+    (Just (ST t1 l1), Just (ST t2 l2)) ->
+      if t1==t2
+      then Just (ST BoolT (joinLabel l1 l2))
+      else Nothing
+    _ -> Nothing
   VarE x -> Map.lookup x env
   LetE x e1 e2 -> case typecheck cds env e1 of
     Just t1 -> typecheck cds (Map.insert x t1 env) e2
