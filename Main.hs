@@ -428,7 +428,7 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 -- Typable expressions evaluate to final type
 -- Implemented with confidentiality/secrecy in mind.
 
---   typecheck ∈ tenv × expr ⇀ stype
+--   typecheck ∈ list(cdecl) x tenv × expr ⇀ stype
 
 --   -----------
 --   Γ ⊢ i : int·⊥
@@ -504,7 +504,35 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 --   Γ ⊢ e₂ : φ
 --   --------------------------------
 --   Γ ⊢ e₁;e₂ : φ
+--
+----------------------------------------------------------
+--   Objects are treated as nonsecure. Typing will fail
+--   if object code touches secret data. 'Extensions'
+--   are just information provided by our list of CDecls.
+--
+--   Γ ⊢ e₁ : τ₁·⊥
+--   ...
+--   Γ ⊢ eₙ : τₙ·⊥
+--   --------------------------------
+--   Γ ⊢ NEW cn(e₁,,…,eₙ) : (object cn)·⊥
 
+--   Γ ⊢ e₁ : (object cn)·⊥
+--   Γ[x↦τ·⊥] ⊢ fn : τ·⊥
+--   --------------------------------
+--   Γ ⊢ e₁.fn : τ·⊥
+
+--   Γ ⊢ e₁ : (object cn)·⊥
+--   Γ ⊢ e₂ : τ·⊥
+--   Γ[x↦τ·⊥] ⊢ fn : τ·⊥
+--   --------------------------------
+--   Γ ⊢ e₁.fn(e₂) : void·⊥
+
+--   Γ ⊢ e₁ : (object cn)·⊥
+--   Γ ⊢ e₂ : τ·⊥
+--   Γ[x↦τ·⊥] ⊢ mn : (τ·⊥ ⇒ τ'·⊥)·⊥
+--   --------------------------------
+--   Γ ⊢ e₁.fn(e₂) : τ'·⊥
+--
 typecheck :: [CDecl] -> TEnv -> Expr -> Maybe SType
 typecheck cds env e0 = case e0 of
   IntE i -> Just (ST IntT Public)
