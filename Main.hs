@@ -26,7 +26,7 @@ type FName = String
 type MName = String
 
 -- Expressions
--- e ∈ expr ⩴ i | e + e | e × e
+-- e ∈ expr ⩴ i | e + e | e × e | e < e | e > e | e == e
 --          | x | LET x = e IN e
 --          | FUN (x:τ) ⇒ e
 --          | e(e)
@@ -44,6 +44,9 @@ data Expr =
   |  BoolE Bool
   |  PlusE Expr Expr
   |  TimesE Expr Expr
+  |  LtE Expr Expr
+  |  GtE Expr Expr
+  |  EqE Expr Expr
   |  IfE Expr Expr Expr
   |  VarE VName
   |  LetE VName Expr Expr
@@ -216,6 +219,15 @@ buildMethodMap (MDecl mn x t e:mds) =
 -- interp(cds,γ,σ,e₁+e₂) ≜ ⟨i₁×i₂,σ″⟩
 --   where ⟨i₁,σ′⟩ = interp(cds,γ,σ,e₁)
 --   where ⟨i₂,σ″⟩ = interp(cds,γ,σ′,e₂)
+-- interp(cds,γ,σ,e₁<e₂) ≜ ⟨i₁<i₂,σ″⟩
+--   where ⟨i₁,σ′⟩ = interp(cds,γ,σ,e₁)
+--   where ⟨i₂,σ″⟩ = interp(cds,γ,σ′,e₂)
+-- interp(cds,γ,σ,e₁>e₂) ≜ ⟨i₁>i₂,σ″⟩
+--   where ⟨i₁,σ′⟩ = interp(cds,γ,σ,e₁)
+--   where ⟨i₂,σ″⟩ = interp(cds,γ,σ′,e₂)
+-- interp(cds,γ,σ,e₁==e₂) ≜ ⟨i₁==i₂,σ″⟩
+--   where ⟨i₁,σ′⟩ = interp(cds,γ,σ,e₁)
+--   where ⟨i₂,σ″⟩ = interp(cds,γ,σ′,e₂)
 -- interp(γ,σ,IF e₁ THEN e₂ ELSE e₃) ≜ interp(γ,σ′,e₂)
 --   when ⟨true,σ′⟩ = interp(γ,σ,e₁)
 -- interp(γ,σ,IF e₁ THEN e₂ ELSE e₃) ≜ interp(γ,σ′,e₃)
@@ -270,6 +282,21 @@ interp cds env store e0 = case e0 of
   TimesE e1 e2 -> case interp cds env store e1 of
     Just (IntV i1,store') -> case interp cds env store' e2 of
       Just (IntV i2,store'') -> Just (IntV (i1 * i2),store'')
+      _ -> Nothing
+    _ -> Nothing
+  LtE e1 e2 -> case interp cds env store e1 of
+    Just (IntV i1,store') -> case interp cds env store' e2 of
+      Just (IntV i2,store'') -> Just (BoolV (i1 < i2),store'')
+      _ -> Nothing
+    _ -> Nothing
+  GtE e1 e2 -> case interp cds env store e1 of
+    Just (IntV i1,store') -> case interp cds env store' e2 of
+      Just (IntV i2,store'') -> Just (BoolV (i1 > i2),store'')
+      _ -> Nothing
+    _ -> Nothing
+  EqE e1 e2 -> case interp cds env store e1 of
+    Just (IntV i1,store') -> case interp cds env store' e2 of
+      Just (IntV i2,store'') -> Just (BoolV (i1 == i2),store'')
       _ -> Nothing
     _ -> Nothing
   IfE e1 e2 e3 -> case interp cds env store e1 of
@@ -820,6 +847,16 @@ interpTests =
       CallE (VarE "p") "getNotB" (IntE 0)
       -- ⟨v,σ⟩ = ⟨10,{0↦10,1↦3,2↦4}⟩
     , Just (BoolV False,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,BoolV True),(4,IntV 4)])
+    )
+   , -- LET i = Box 3 IN
+     -- WHILE(!i <= 20) {i ← !i + 3}
+    ( LetE "i" (BoxE (IntE 3) Public) $
+      WhileE (IfE (EqE (UnboxE (VarE "i")) (IntE 20))
+                  (BoolE True)
+                  (IfE (LtE (UnboxE (VarE "i")) (IntE 20)) (BoolE True) (BoolE False))) $
+             (AssignE (VarE "i") (PlusE (UnboxE (VarE "i")) (IntE 3)))
+      -- True
+    , Just (BoolV True,Map.fromList [(0,IntV 21)])
     )
    ]
   )
