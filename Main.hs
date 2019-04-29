@@ -76,6 +76,12 @@ data Type = IntT
           | BoolT
           | ArrowT SType SType
           | RefT SType
+          --
+          | ObjectT CName
+          | VoidT
+  deriving (Eq,Ord,Show)
+
+data MType = MethodT Type Type
   deriving (Eq,Ord,Show)
 
 -- φ ∈ stype ⩴ τ·ς
@@ -94,13 +100,16 @@ seqE e1 e2 = LetE "_" e1 e2
 -- class declaration
 -- cd ∈ cdecl ⩴ CLASS cn EXTENDS cn … cn FIELDS fn … fn ~ md … md
 --
---                                 field
---                                 names
---                                 ⌄⌄⌄⌄⌄⌄⌄
-data CDecl = CDecl CName [CName] [FName] [MDecl]
---                 ^^^^^                   ^^^^^^^
---                 class                   method
---                 name                    declarations
+--                                field
+--                                names
+--                               ⌄⌄⌄⌄⌄⌄⌄
+data CDecl = CDecl CName [CName] [FDecl] [MDecl]
+--                 ^^^^^                 ^^^^^^^
+--                 class                 method
+--                 name                declarations
+  deriving (Eq,Ord,Show)
+
+data FDecl = FDecl FName Type
   deriving (Eq,Ord,Show)
 
 -- method declaration
@@ -109,10 +118,10 @@ data CDecl = CDecl CName [CName] [FName] [MDecl]
 --                       parameter
 --                       name
 --                       ⌄⌄⌄⌄⌄
-data MDecl = MDecl MName VName Expr
---                 ^^^^^       ^^^^
---                 method      method
---                 name        body
+data MDecl = MDecl MName VName MType Expr
+--                 ^^^^^             ^^^^
+--                 method           method
+--                 name              body
   deriving (Eq,Ord,Show)
 
 -- (See test suite for some example class declarations, method declarations,
@@ -131,11 +140,11 @@ data Prog = Prog [CDecl] Expr
 
 -- object values
 -- o ∈ object ⩴ OBJECT cn[o,…,o]({fn↦ℓ,…,fn↦ℓ}) {mn↦[FUN(x)⇒e],…,mn↦[FUN(x)⇒e]}
---                                  field map
+--                                     field map
 --                                  ⌄⌄⌄⌄⌄⌄⌄⌄⌄⌄⌄⌄⌄⌄⌄
-data Object = Object CName [Object] (Map FName Loc) (Map MName (VName,Expr))
---                   ^^^^^                 ^^^^^^^^^^^^^^^^^^^^^^^^
---                   class                 method map
+data Object = Object CName [Object] (Map FName (Loc,Type)) (Map MName (VName,MType,Expr))
+--                   ^^^^^                          ^^^^^^^^^^^^^^^^^^^^^^^^
+--                   class                               method map
 --                   name
   deriving (Eq,Ord,Show)
 
@@ -186,20 +195,20 @@ lookupClass (CDecl cn exs fns mds:cds) cn' | cn == cn' = Just (CDecl cn exs fns 
 lookupClass (CDecl cn exs fns mds:cds) cn' | otherwise = lookupClass cds cn'
 
 -- Constructs a field map from a list of field names and a list of locations.
-buildFieldMap :: [FName] -> [Loc] -> Maybe (Map FName Loc)
+buildFieldMap :: [FDecl] -> [Loc] -> Maybe (Map FName (Loc, Type))
 buildFieldMap [] [] = Just Map.empty
-buildFieldMap (fn:fns) (l:ls) = case buildFieldMap fns ls of
-  Just fm -> Just (Map.insert fn l fm)
+buildFieldMap (FDecl fn t:fds) (l:ls) = case buildFieldMap fds ls of
+  Just fm -> Just (Map.insert fn (l,t) fm)
   Nothing -> Nothing
 buildFieldMap [] (_:_) = Nothing
 buildFieldMap (_:_) [] = Nothing
 
 -- Constructs a method map from a list of method declarations.
-buildMethodMap :: [MDecl] -> Map MName (VName,Expr)
+buildMethodMap :: [MDecl] -> Map MName (VName,MType,Expr)
 buildMethodMap [] = Map.empty
-buildMethodMap (MDecl mn x e:mds) =
+buildMethodMap (MDecl mn x t e:mds) =
   let mm = buildMethodMap mds
-  in Map.insert mn (x,e) mm
+  in Map.insert mn (x,t,e) mm
 
 -- interp ∈ list(cdecl) × env × store × expr ⇀ value × store
 -- interp(cds,γ,σ,i) ≜ ⟨i,σ⟩
@@ -335,7 +344,7 @@ interp cds env store e0 = case e0 of
     Nothing -> Nothing
   GetFieldE e fn -> case interp cds env store e of
     Just (ObjectV (Object _ os fm _),store') -> case Map.lookup fn fm of
-      Just l -> case Map.lookup l store' of
+      Just (l,t) -> case Map.lookup l store' of
         Just v -> Just (v,store')
         Nothing -> Nothing
       Nothing -> dispatch cds env store' os e0
@@ -343,14 +352,14 @@ interp cds env store e0 = case e0 of
   SetFieldE e1 fn e2 -> case interp cds env store e1 of
     Just (ObjectV (Object _ os fm _),store') -> case interp cds env store' e2 of
       Just (v,store'') -> case Map.lookup fn fm of
-        Just l -> Just (v,Map.insert l v store'')
+        Just (l,t) -> Just (v,Map.insert l v store'')
         Nothing -> dispatch cds env store' os e0
       Nothing -> Nothing
     _ -> Nothing
   CallE e1 mn e2 -> case interp cds env store e1 of
     Just (ObjectV (Object cn os fm mm),store') -> case interp cds env store' e2 of
       Just (v,store'') -> case Map.lookup mn mm of
-        Just (x,e) ->
+        Just (x,t,e) ->
           let env' = mapParents (Map.fromList [("this",ObjectV (Object cn os fm mm)), (x,v)]) os
           in case os of
             o':os' -> case interp cds (Map.insert "super" (ObjectV o') env') store'' e of
@@ -390,8 +399,8 @@ initMany :: [CDecl] -> Env -> Store -> [CName] -> [Expr] -> Maybe ([Expr],[Objec
 initMany cds env store [] es = Just (es,[],store)
 initMany cds env store (_:_) [] = Nothing
 initMany cds env store (cn:cns) es = case lookupClass cds cn of
-  Just cd @ (CDecl _ pns fns _) -> case initMany cds env store pns es of
-    Just (res,ps,store') -> case buildExprList fns res of
+  Just cd @ (CDecl _ pns fds _) -> case initMany cds env store pns es of
+    Just (res,ps,store') -> case buildExprList fds res of
       Just (es',res') -> case new cds env store' cd es' of
         Just (ObjectV (Object _ _ fm mm),store'') ->
           let o = Object cn ps fm mm
@@ -412,7 +421,7 @@ mapParents env (o @ (Object cn _ _ _):os) =
 -- Decide a subset of a list of expressions that should correspond to a field
 -- list. Returns a tuple of expressions: the first is the corresponding
 -- expressions, the second being the unmatched expressions.
-buildExprList :: [FName] -> [Expr] -> Maybe ([Expr],[Expr])
+buildExprList :: [FDecl] -> [Expr] -> Maybe ([Expr],[Expr])
 buildExprList [] es = Just ([],es)
 buildExprList (_:_) [] = Nothing
 buildExprList (fn:fns) (e:es) = case buildExprList fns es of
@@ -422,7 +431,7 @@ buildExprList (fn:fns) (e:es) = case buildExprList fns es of
 -- Search for an inherited field or method and evaluate it.
 dispatch :: [CDecl] -> Env -> Store -> [Object] -> Expr -> Maybe (Value,Store)
 dispatch cds env store [] e0 = Nothing
-dispatch cds env store (o @ (Object cn os' fm mm):os) e0 = 
+dispatch cds env store (o @ (Object cn os' fm mm):os) e0 =
   let env' = Map.insert "this" (ObjectV o) env
       e0' = case e0 of
         GetFieldE e fn -> GetFieldE (VarE "this") fn
@@ -444,13 +453,16 @@ meetLabel :: Label -> Label -> Label
 meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 
 -- Typable expressions evaluate to final type
--- Implemented with confidentiality/secrecy in mind. Integrity is also possible
+-- Implemented with confidentiality/secrecy in mind.
 
--- typecheck ∈ tenv × expr ⇀ stype
---
+--   typecheck ∈ list(cdecl) x tenv × expr ⇀ stype
+
 --   -----------
 --   Γ ⊢ i : int·⊥
---
+
+--   -----------
+--   Γ ⊢ b : bool·⊥
+
 --   Γ ⊢ e₁ : int·ς₁
 --   Γ ⊢ e₂ : int·ς₂
 --   ------------
@@ -460,111 +472,249 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 --   Γ ⊢ e₂ : int·ς₂
 --   ------------
 --   Γ ⊢ e₁ * e₂ : int·(ς₁ V ς₂)
---
---   -----------
---   Γ ⊢ b : bool·⊥
---
+
+--   Note: this prevents insecure *indirect* information flow
+--   from e1 to output.
 --   Γ ⊢ e₁ : bool·ς₁
 --   Γ ⊢ e₂ : τ·ς₂
 --   Γ ⊢ e₃ : τ·ς₃
 --   --------------------------------
 --   Γ ⊢ IF e₁ THEN e₂ ELSE e₃ : τ·(ς₁ V ς₂ V ς₃)
---
---   NOTE: Tenv 'extension' comes from label from BoxE expr.
---   Γ[x ↦ _·ς₁] ⊢ e : τ·ς₂
---   ------------------------
---   Γ ⊢ BOX e : ref(τ·ς₁)·⊥
---
---   Γ ⊢ e : ref(τ·ς₁)·ς₂
---   -------------
---   Γ ⊢ !e : τ·(ς₁ V ς₂)
---
---   Γ ⊢ e₁ : ref(τ·ς₁)·ς
---   Γ ⊢ e₂ : τ·ς₂
---   ς₂ ≼ ς₁
---   --------------
---   Γ ⊢ e₁ ← e₂ : τ·ς₂
---
+
 --   Γ(x) = τ·ς
 --   --------------
 --   Γ ⊢ x : τ·ς
---
---   Γ ⊢ e₁ : τ₁
---   Γ[x↦τ₁] ⊢ e₂ : τ₂
+
+--   Γ ⊢ e₁ : φ₁
+--   Γ[x↦φ₁] ⊢ e₂ : φ₂
 --   -------------------------
---   Γ ⊢ LET x = e₁ IN e₂ : τ₂
---
+--   Γ ⊢ LET x = e₁ IN e₂ : φ₂
+
 --   Γ[x↦φ₁] ⊢ e : φ₂
 --   ---------------------------
 --   Γ ⊢ FUN x ⇒ e : (φ₁ ⇒ φ₂)·⊥
---
+
 --   Γ ⊢ e₁ : (φ ⇒ τ₂·ς₂)·ς₁)
 --   Γ ⊢ e₂ : φ
 --   ------------------
 --   Γ ⊢ e₁(e₂) : τ₂·(ς₁ V ς₂)
 
+--   NOTE: Tenv 'extension' comes from label from BoxE expr.
+--   This is a hack to create low/high 'memories' that satisfy
+--   the definition of non-interference using the core language.
+--   Γ[x ↦ _·ς₁] ⊢ e : τ·ς₂
+--   ------------------------
+--   Γ ⊢ BOX e : ref(τ·ς₁)·⊥
 
-typecheck :: TEnv -> Expr -> Maybe SType
-typecheck env e0 = case e0 of
+--   Γ ⊢ e : ref(τ·ς₁)·ς₂
+--   -------------
+--   Γ ⊢ !e : τ·(ς₁ V ς₂)
+
+--   Note: this prevents insecure *direct* informtion flow
+--   from e2 to e1.
+--   Γ ⊢ e₁ : ref(τ·ς₁)·ς
+--   Γ ⊢ e₂ : τ·ς₂
+--   ς₂ ≼ ς₁
+--   --------------
+--   Γ ⊢ e₁ ← e₂ : τ·ς₂
+
+--   Note: this also prevents insecure *indirect* information
+--   flow. This only describes a loop that terminates;
+--   infinite loops break the definition of non-interference,
+--   which requires programs to terminate.
+--   Γ ⊢ e₁ : bool·ς₁
+--   Γ ⊢ e₂ : τ·ς₂
+--   --------------------------------
+--   Γ ⊢ while(e₁){e₂} : bool·(ς₁ V ς₂)
+
+--   Γ ⊢ e₁ : φ'
+--   Γ ⊢ e₂ : φ
+--   --------------------------------
+--   Γ ⊢ e₁;e₂ : φ
+--
+----------------------------------------------------------
+--   Objects are treated as nonsecure. Typing will fail
+--   if object code touches secret data. 'Extensions'
+--   are just information provided by our list of CDecls.
+--
+--   Γ ⊢ e₁ : τ₁·⊥
+--   ...
+--   Γ ⊢ eₙ : τₙ·⊥
+--   --------------------------------
+--   Γ ⊢ NEW cn(e₁,,…,eₙ) : (object cn)·⊥
+
+--   Γ ⊢ e₁ : (object cn)·⊥
+--   Γ[x↦τ·⊥] ⊢ fn : τ·⊥
+--   --------------------------------
+--   Γ ⊢ e₁.fn : τ·⊥
+
+--   Γ ⊢ e₁ : (object cn)·⊥
+--   Γ ⊢ e₂ : τ·⊥
+--   Γ[x↦τ·⊥] ⊢ fn : τ·⊥
+--   --------------------------------
+--   Γ ⊢ e₁.fn(e₂) : void·⊥
+
+--   Γ ⊢ e₁ : (object cn)·⊥
+--   Γ ⊢ e₂ : τ·⊥
+--   Γ[x↦τ·⊥] ⊢ mn : (τ·⊥ ⇒ τ'·⊥)·⊥
+--   --------------------------------
+--   Γ ⊢ e₁.fn(e₂) : τ'·⊥
+--
+typecheck :: [CDecl] -> TEnv -> Expr -> Maybe SType
+typecheck cds env e0 = case e0 of
   IntE i -> Just (ST IntT Public)
   BoolE b -> Just (ST BoolT Public)
-  PlusE e1 e2 -> case (typecheck env e1, typecheck env e2) of
+  PlusE e1 e2 -> case (typecheck cds env e1, typecheck cds env e2) of
     (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST IntT (joinLabel l1 l2))
     _ -> Nothing
-  TimesE e1 e2 -> case (typecheck env e1, typecheck env e2) of
+  TimesE e1 e2 -> case (typecheck cds env e1, typecheck cds env e2) of
     (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST IntT (joinLabel l1 l2))
     _ -> Nothing
-  IfE e1 e2 e3 -> case typecheck env e1 of
-    Just (ST BoolT l1) -> case (typecheck env e2, typecheck env e3) of
+  IfE e1 e2 e3 -> case typecheck cds env e1 of
+    Just (ST BoolT l1) -> case (typecheck cds env e2, typecheck cds env e3) of
       (Just (ST t2 l2), Just (ST t3 l3)) ->
         if t2==t3
         then Just (ST t2 (joinLabel l1 (joinLabel l2 l3)))
         else Nothing
       _ -> Nothing
     _ -> Nothing
-  VarE x -> Map.lookup x env
-  LetE x e1 e2 -> case typecheck env e1 of
-    Just t1 -> typecheck (Map.insert x t1 env) e2
+  LtE e1 e2 -> case (typecheck cds env e1, typecheck cds env e2) of
+    (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST BoolT (joinLabel l1 l2))
     _ -> Nothing
-  FunE x t e -> case typecheck (Map.insert x t env) e of
+  GtE e1 e2 -> case (typecheck cds env e1, typecheck cds env e2) of
+    (Just (ST IntT l1), Just (ST IntT l2)) -> Just (ST BoolT (joinLabel l1 l2))
+    _ -> Nothing
+  EqE e1 e2 -> case (typecheck cds env e1, typecheck cds env e2) of
+    (Just (ST t1 l1), Just (ST t2 l2)) ->
+      if t1==t2
+      then Just (ST BoolT (joinLabel l1 l2))
+      else Nothing
+    _ -> Nothing
+  VarE x -> Map.lookup x env
+  LetE x e1 e2 -> case typecheck cds env e1 of
+    Just t1 -> typecheck cds (Map.insert x t1 env) e2
+    _ -> Nothing
+  FunE x t e -> case typecheck cds (Map.insert x t env) e of
     Just t' -> Just (ST (ArrowT t t') Public)
     Nothing -> Nothing
-  AppE e1 e2 -> case (typecheck env e1, typecheck env e2) of
+  AppE e1 e2 -> case (typecheck cds env e1, typecheck cds env e2) of
     (Just (ST (ArrowT s1 (ST t1 l1)) l2), Just s2) ->
       if s1==s2
       then Just (ST t1 (joinLabel l1 l2))
       else Nothing
     _ -> Nothing
-  BoxE e1 l1 -> case typecheck env e1 of
+  BoxE e1 l1 -> case typecheck cds env e1 of
     Just (ST t2 l2) -> Just (ST (RefT (ST t2 l1)) Public)
     _ -> Nothing
-  UnboxE e1 -> case typecheck env e1 of
+  UnboxE e1 -> case typecheck cds env e1 of
     Just (ST (RefT (ST t1 l1)) Public) -> Just (ST t1 l1)
     _ -> Nothing
-  AssignE e1 e2 -> case typecheck env e1 of
-    Just (ST (RefT (ST t1 l1)) Public) -> case typecheck env e2 of
+  AssignE e1 e2 -> case typecheck cds env e1 of
+    Just (ST (RefT (ST t1 l1)) Public) -> case typecheck cds env e2 of
       Just (ST t2 l2) ->
         if (t1==t2 && l1 >= l2)
         then Just (ST t2 l2)
         else Nothing
       _ -> Nothing
     _ -> Nothing
---  WhileE e1 e2 -> case typecheck env e1 of
---    Just (ST BoolT l1) -> case typecheck env e2 of
---    _ -> Nothing
+  WhileE e1 e2 -> case typecheck cds env e1 of
+    Just (ST BoolT l1) -> case typecheck cds env e2 of
+      Just (ST _ l2) -> Just (ST BoolT (joinLabel l1 l2))
+      _ -> Nothing
+    _ -> Nothing
+  NewE cn es -> case lookupClass cds cn of
+    Just cd -> case newFieldCheck cds env cd es of
+      True -> Just (ST (ObjectT cn) Public)
+      False -> Nothing
+    _ -> Nothing
+  GetFieldE e1 fn -> case typecheck cds env e1 of
+    Just (ST (ObjectT cn) Public) -> case lookupClass cds cn of
+      Just (CDecl _ pns fds mds) -> case lookupField fds fn of
+        Just (FDecl fn t) -> Just (ST t Public)
+        _ -> Nothing
+      _ -> Nothing
+    _ -> Nothing
+  SetFieldE e1 fn e2 -> case typecheck cds env e1 of
+    Just (ST (ObjectT cn) Public) -> case lookupClass cds cn of
+      Just (CDecl _ pns fds mds) -> case lookupField fds fn of
+        Just (FDecl fn t1) -> case typecheck cds env e2 of
+          Just (ST t2 Public) ->
+            if t1==t2
+            then Just (ST VoidT Public)
+            else Nothing
+          _ -> Nothing
+        _ -> Nothing
+      _ -> Nothing
+    _ -> Nothing
+  CallE e1 mn e2 -> case typecheck cds env e1 of
+    Just (ST (ObjectT cn) Public) -> case typecheck cds env e2 of
+      Just (ST t1 Public) -> case lookupClass cds cn of
+        Just (CDecl _ pns fds mds) -> case lookupMethod mds mn of
+          Just (MDecl _ vn (MethodT t2 t3) e') ->
+            if t1==t2
+            then Just (ST t3 Public)
+            else Nothing
+          _ -> Nothing
+        _ -> Nothing
+      _ -> Nothing
+    _ -> Nothing
+
+newFieldCheck :: [CDecl] -> TEnv -> CDecl -> [Expr] -> Bool
+newFieldCheck cds env cd es =
+  let (ts) = getAllFieldTypes cds cd in
+  let (ts') = getExprTypes cds env es in
+  compareTypeList ts ts'
+
+compareTypeList :: [Type] -> [Type] -> Bool
+compareTypeList [] [] = True
+compareTypeList [] (t':ts') = False
+compareTypeList (t:ts) [] = False
+compareTypeList (t:ts) (t':ts') = (t==t') && (compareTypeList ts ts')
+
+getAllFieldTypes :: [CDecl] -> CDecl -> [Type]
+getAllFieldTypes cds (CDecl cn [] fds mds) = case lookupClass cds cn of
+  Just cd -> getFieldTypes cds cd
+  _ -> []
+getAllFieldTypes cds (CDecl cn (p:ps) fds mds) = case lookupClass cds cn of
+  Just cd -> case lookupClass cds p of
+    Just (CDecl _ ps' _ _ ) -> case getFieldTypes cds cd of
+      ts -> ts ++ (getAllFieldTypes cds (CDecl p (ps++ps') fds mds))
+    _ -> []
+  _ -> []
+
+getFieldTypes :: [CDecl] -> CDecl -> [Type]
+getFieldTypes cds (CDecl cn [] [] mds) = []
+getFieldTypes cds (CDecl cn (_:_) [] mds) = []
+getFieldTypes cds (CDecl cn ps (FDecl _ t:fds) mds) = t:(getFieldTypes cds (CDecl cn ps fds mds))
+
+getExprTypes :: [CDecl] -> TEnv -> [Expr] -> [Type]
+getExprTypes cds env [] = []
+getExprTypes cds env (e:es) = case typecheck cds env e of
+  Just (ST t Public) -> t:(getExprTypes cds env es)
+  _ -> []
+
+lookupMethod :: [MDecl] -> MName -> Maybe MDecl
+lookupMethod [] _ = Nothing
+lookupMethod (MDecl mn vn t e:mds) mn' | mn == mn' = Just (MDecl mn vn t e)
+lookupMethod (MDecl mn vn t e:mds) mn' | otherwise = lookupMethod mds mn'
+
+lookupField :: [FDecl] -> FName -> Maybe FDecl
+lookupField [] _ = Nothing
+lookupField (FDecl fn t:fds) fn' | fn == fn' = Just (FDecl fn t)
+lookupField (FDecl fn t:fds) fn' | otherwise = lookupField fds fn'
 
 interpTests :: (Int,String,Expr -> Maybe (Value,Store),[(Expr,Maybe (Value,Store))])
 interpTests =
-  let cds = 
+  let cds =
         -- CLASS Object
         --   FIELDS hash
         --   ~
         --   METHOD getHash(_) ⇒ this.hash
         --   METHOD mdist(_) ⇒ this.hash + this.hash
         [ CDecl "Object" []
-                ["hash"]
-                [ MDecl "getHash" "_" (GetFieldE (VarE "this") "hash")
-                , MDecl "toInt" "_" (PlusE (GetFieldE (VarE "this") "hash")
+                [ FDecl "hash" IntT]
+                [ MDecl "getHash" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "hash")
+                , MDecl "toInt" "_" (MethodT IntT IntT) (PlusE (GetFieldE (VarE "this") "hash")
                                            (GetFieldE (VarE "this") "hash"))
                 ]
         -- CLASS ABool
@@ -573,9 +723,9 @@ interpTests =
         --   METHOD getHash(_) ⇒ this.hash
         --   METHOD mdist(_) ⇒ this.hash + this.hash
         , CDecl "ABool" []
-                ["b"]
-                [ MDecl "getB" "_" (GetFieldE (VarE "this") "b")
-                , MDecl "setB" "b" (SetFieldE (VarE "this") "b" (VarE "b"))
+                [ FDecl "b" BoolT]
+                [ MDecl "getB" "_" (MethodT IntT BoolT) (GetFieldE (VarE "this") "b")
+                , MDecl "setB" "b" (MethodT BoolT VoidT) (SetFieldE (VarE "this") "b" (VarE "b"))
                 ]
         -- CLASS Point2D
         --   FIELDS x y
@@ -584,14 +734,14 @@ interpTests =
         --   METHOD getY(_) ⇒ this.y
         --   METHOD setX(x) ⇒ this.x ← x
         --   METHOD setY(y) ⇒ this.y ← y
-        --   METHOD mdist(_) ⇒ this.getX(0) + this.getY(0) 
+        --   METHOD mdist(_) ⇒ this.getX(0) + this.getY(0)
         , CDecl "Point2D" ["Object"]
-                ["x","y"] 
-                [ MDecl "getX" "_" (GetFieldE (VarE "this") "x")
-                , MDecl "getY" "_" (GetFieldE (VarE "this") "y")
-                , MDecl "setX" "x" (SetFieldE (VarE "this") "x" (VarE "x"))
-                , MDecl "setY" "y" (SetFieldE (VarE "this") "y" (VarE "y"))
-                , MDecl "mdist" "_" (PlusE (CallE (VarE "this") "getX" (IntE 1))
+                [ FDecl "x" IntT, FDecl "y" IntT]
+                [ MDecl "getX" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "x")
+                , MDecl "getY" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "y")
+                , MDecl "setX" "x" (MethodT IntT VoidT) (SetFieldE (VarE "this") "x" (VarE "x"))
+                , MDecl "setY" "y" (MethodT IntT VoidT) (SetFieldE (VarE "this") "y" (VarE "y"))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "this") "getX" (IntE 1))
                                            (CallE (VarE "this") "getY" (IntE 2)))
                 ]
         -- CLASS Point3D EXTENDS Point2D
@@ -599,14 +749,14 @@ interpTests =
         --   ~
         --   METHOD getZ(_) ⇒ this.z
         --   METHOD setZ(z) ⇒ this.z ← z
-        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0) 
+        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0)
         , CDecl "Point3D" ["Point2D"]
-                ["z"]
-                [ MDecl "getZ" "_" (GetFieldE (VarE "this") "z")
-                , MDecl "setZ" "z" (SetFieldE (VarE "this") "z" (VarE "z"))
-                , MDecl "mdist" "_" (PlusE (CallE (VarE "super") "mdist" (IntE 3))
+                [ FDecl "z" IntT]
+                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
+                , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
                                            (CallE (VarE "this") "getZ" (IntE 4)))
-                , MDecl "mdist2" "_" (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3))
+                , MDecl "mdist2" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3))
                                             (CallE (VarE "this") "getZ" (IntE 4)))
                 ]
         -- CLASS Point3DBool EXTENDS Point2D,IBool
@@ -614,15 +764,15 @@ interpTests =
         --   ~
         --   METHOD getZ(_) ⇒ this.z
         --   METHOD setZ(z) ⇒ this.z ← z
-        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0) 
+        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0)
         --   METHOD getNotB(_) ⇒ LET b = IBool.getB IN IF b THEN False Else True
         , CDecl "Point3DBool" ["Point2D", "ABool"]
-                ["z"]
-                [ MDecl "getZ" "_" (GetFieldE (VarE "this") "z")
-                , MDecl "setZ" "z" (SetFieldE (VarE "this") "z" (VarE "z"))
-                , MDecl "mdist" "_" (PlusE (CallE (VarE "super") "mdist" (IntE 3))
+                [ FDecl "z" IntT]
+                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
+                , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
                                            (CallE (VarE "this") "getZ" (IntE 4)))
-                , MDecl "getNotB" "_" (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
+                , MDecl "getNotB" "_" (MethodT IntT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
                                                 (IfE (VarE "b") (BoolE False) (BoolE True)))
                 ]
         ]
@@ -725,9 +875,45 @@ interpTests =
 
 typecheckTests :: (Int,String,Expr -> Maybe SType,[(Expr,Maybe SType)])
 typecheckTests =
+  let cds =
+        [ CDecl "Object" []
+                [ FDecl "hash" IntT]
+                [ MDecl "getHash" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "hash")]
+        , CDecl "Point2D" ["Object"]
+                [ FDecl "x" IntT,FDecl "y" IntT]
+                [ MDecl "getX" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "x")
+                , MDecl "getY" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "y")
+                , MDecl "setX" "x" (MethodT IntT VoidT) (SetFieldE (VarE "this") "x" (VarE "x"))
+                , MDecl "setY" "y" (MethodT IntT VoidT) (SetFieldE (VarE "this") "y" (VarE "y"))
+                ]
+        , CDecl "ABool" []
+                [ FDecl "b" BoolT]
+                [ MDecl "getB" "_" (MethodT IntT BoolT) (GetFieldE (VarE "this") "b")
+                , MDecl "setB" "b" (MethodT BoolT VoidT) (SetFieldE (VarE "this") "b" (VarE "b"))
+                ]
+        , CDecl "Point3D" ["Point2D"]
+                [ FDecl "z" IntT]
+                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
+                , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
+                                           (CallE (VarE "this") "getZ" (IntE 4)))
+                , MDecl "mdist2" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3))
+                                            (CallE (VarE "this") "getZ" (IntE 4)))
+                ]
+        , CDecl "Point3DBool" ["Point2D", "ABool"]
+                [ FDecl "z" IntT]
+                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
+                , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
+                                           (CallE (VarE "this") "getZ" (IntE 4)))
+                , MDecl "getNotB" "_" (MethodT IntT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
+                                                (IfE (VarE "b") (BoolE False) (BoolE True)))
+                ]
+        ]
+  in
   (1
   ,"typecheck"
-  ,typecheck Map.empty
+  ,typecheck cds Map.empty
   ,[
     -- data should be designated as secret to prevent information flow leakage
     -- !(Box:Secret 10) + 10
@@ -762,7 +948,82 @@ typecheckTests =
     ,
     -- Same as above, but with type mismatch
     -- let f = (fun x:int,pub -> x + 10) in f(false)
-    ( LetE "f" (FunE "x" (ST IntT Public) (PlusE (VarE "x") (IntE 10))) (AppE (VarE "f") (BoolE False)) , Nothing) ]
+    ( LetE "f" (FunE "x" (ST IntT Public) (PlusE (VarE "x") (IntE 10))) (AppE (VarE "f") (BoolE False))
+    , Nothing
+    )
+    ,
+    -- LET b1 = BOX:public true IN
+    -- LET b2 = BOX:pulic 3 IN
+    -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
+    ( LetE "b1" (BoxE (BoolE True) Public) $
+      LetE "b2" (BoxE (IntE 3) Public) $
+      WhileE (UnboxE (VarE "b1")) $
+        seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
+        AssignE (VarE "b1") (BoolE False)
+    , Just (ST BoolT Public)
+    )
+    ,
+    -- LET b1 = BOX:secret true IN
+    -- LET b2 = BOX:public 3 IN
+    -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
+    ( LetE "b1" (BoxE (BoolE True) Secret) $
+      LetE "b2" (BoxE (IntE 3) Public) $
+      WhileE (UnboxE (VarE "b1")) $
+        seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
+        AssignE (VarE "b1") (BoolE False)
+    , Just (ST BoolT Secret)
+    )
+    ,
+    -- We designate objects as strictly public entities.
+    -- Not allowed to use secret value as method argument.
+    -- LET b1 = BOX:secret true IN
+    -- LET p = New Point2D(0,1,2) IN
+    -- p.setx(!b1)
+    ( LetE "b1" (BoxE (IntE 0) Secret) $
+      LetE "p" (NewE "Point2D" [IntE 0,IntE 1,IntE 2]) $
+      CallE (VarE "p") "setX" (UnboxE (VarE "b1"))
+    , Nothing
+    )
+    ,
+    -- We designate objects as strictly public entities.
+    -- Not allowed to use secret value as initialization parameter.
+    -- LET b1 = BOX:secret true IN
+    -- LET p = New Point2D(!b1,1,2) IN
+    -- p.setx(0)
+    ( LetE "b1" (BoxE (IntE 0) Secret) $
+      LetE "p" (NewE "Point2D" [(UnboxE (VarE "b1")),IntE 1,IntE 2]) $
+      CallE (VarE "p") "setX" (IntE 0)
+    , Nothing
+    )
+    ,
+    -- Breaks no rules with public data. All Good.
+    ( LetE "b1" (BoxE (IntE 0) Public) $
+      LetE "p" (NewE "Point2D" [IntE 0,(UnboxE (VarE "b1")),IntE 2]) $
+      CallE (VarE "p") "setX" ((UnboxE (VarE "b1")))
+    , Just (ST VoidT Public)
+    )
+    ,
+    -- Incorrect Object Creation
+    ( NewE "Point2D" [IntE 1,IntE 2]
+    , Nothing
+    )
+    ,
+    -- Correct Object Creation (with 2 levels of inheritance)
+    ( NewE "Point3D" [IntE 0,IntE 1,IntE 2,IntE 3]
+    , Just (ST (ObjectT "Point3D") Public)
+    )
+    ,
+    -- Correct Object Creation (with 2 levels of inheritance, plus multiple inheritance)
+    ( NewE "Point3DBool" [IntE 0,IntE 1,IntE 2,BoolE True, IntE 3]
+    , Just (ST (ObjectT "Point3DBool") Public)
+    )
+    ,
+    -- Type mismatch, x field has int type. Doesn't work with SetFieldE either.
+    ( LetE "p" (NewE "Point2D" [IntE 0,IntE 1,IntE 2]) $
+      CallE (VarE "p") "setX" (BoolE True)
+    , Nothing
+    )
+    ]
   )
 
 ---------------
