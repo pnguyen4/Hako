@@ -395,7 +395,7 @@ buildExprList (fn:fns) (e:es) = case buildExprList fns es of
 -- Search for an inherited field or method and evaluate it.
 dispatch :: [CDecl] -> Env -> Store -> [Object] -> Expr -> Maybe (Value,Store)
 dispatch cds env store [] e0 = Nothing
-dispatch cds env store (o @ (Object cn os' fm mm):os) e0 = 
+dispatch cds env store (o @ (Object cn os' fm mm):os) e0 =
   let env' = Map.insert "this" (ObjectV o) env
       e0' = case e0 of
         GetFieldE e fn -> GetFieldE (VarE "this") fn
@@ -417,13 +417,16 @@ meetLabel :: Label -> Label -> Label
 meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 
 -- Typable expressions evaluate to final type
--- Implemented with confidentiality/secrecy in mind. Integrity is also possible
+-- Implemented with confidentiality/secrecy in mind.
 
--- typecheck ∈ tenv × expr ⇀ stype
---
+--   typecheck ∈ tenv × expr ⇀ stype
+
 --   -----------
 --   Γ ⊢ i : int·⊥
---
+
+--   -----------
+--   Γ ⊢ b : bool·⊥
+
 --   Γ ⊢ e₁ : int·ς₁
 --   Γ ⊢ e₂ : int·ς₂
 --   ------------
@@ -433,49 +436,65 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 --   Γ ⊢ e₂ : int·ς₂
 --   ------------
 --   Γ ⊢ e₁ * e₂ : int·(ς₁ V ς₂)
---
---   -----------
---   Γ ⊢ b : bool·⊥
---
+
+--   Note: this prevents insecure *indirect* information flow
+--   from e1 to output.
 --   Γ ⊢ e₁ : bool·ς₁
 --   Γ ⊢ e₂ : τ·ς₂
 --   Γ ⊢ e₃ : τ·ς₃
 --   --------------------------------
 --   Γ ⊢ IF e₁ THEN e₂ ELSE e₃ : τ·(ς₁ V ς₂ V ς₃)
---
---   NOTE: Tenv 'extension' comes from label from BoxE expr.
---   Γ[x ↦ _·ς₁] ⊢ e : τ·ς₂
---   ------------------------
---   Γ ⊢ BOX e : ref(τ·ς₁)·⊥
---
---   Γ ⊢ e : ref(τ·ς₁)·ς₂
---   -------------
---   Γ ⊢ !e : τ·(ς₁ V ς₂)
---
---   Γ ⊢ e₁ : ref(τ·ς₁)·ς
---   Γ ⊢ e₂ : τ·ς₂
---   ς₂ ≼ ς₁
---   --------------
---   Γ ⊢ e₁ ← e₂ : τ·ς₂
---
+
 --   Γ(x) = τ·ς
 --   --------------
 --   Γ ⊢ x : τ·ς
---
---   Γ ⊢ e₁ : τ₁
---   Γ[x↦τ₁] ⊢ e₂ : τ₂
+
+--   Γ ⊢ e₁ : φ₁
+--   Γ[x↦φ₁] ⊢ e₂ : φ₂
 --   -------------------------
---   Γ ⊢ LET x = e₁ IN e₂ : τ₂
---
+--   Γ ⊢ LET x = e₁ IN e₂ : φ₂
+
 --   Γ[x↦φ₁] ⊢ e : φ₂
 --   ---------------------------
 --   Γ ⊢ FUN x ⇒ e : (φ₁ ⇒ φ₂)·⊥
---
+
 --   Γ ⊢ e₁ : (φ ⇒ τ₂·ς₂)·ς₁)
 --   Γ ⊢ e₂ : φ
 --   ------------------
 --   Γ ⊢ e₁(e₂) : τ₂·(ς₁ V ς₂)
 
+--   NOTE: Tenv 'extension' comes from label from BoxE expr.
+--   This is a hack to create low/high 'memories' that satisfy
+--   the definition of non-interference using the core language.
+--   Γ[x ↦ _·ς₁] ⊢ e : τ·ς₂
+--   ------------------------
+--   Γ ⊢ BOX e : ref(τ·ς₁)·⊥
+
+--   Γ ⊢ e : ref(τ·ς₁)·ς₂
+--   -------------
+--   Γ ⊢ !e : τ·(ς₁ V ς₂)
+
+--   Note: this prevents insecure *direct* informtion flow
+--   from e2 to e1.
+--   Γ ⊢ e₁ : ref(τ·ς₁)·ς
+--   Γ ⊢ e₂ : τ·ς₂
+--   ς₂ ≼ ς₁
+--   --------------
+--   Γ ⊢ e₁ ← e₂ : τ·ς₂
+
+--   Note: this also prevents insecure *indirect* information
+--   flow. This only describes a loop that terminates;
+--   infinite loops break the definition of non-interference,
+--   which requires programs to terminate.
+--   Γ ⊢ e₁ : bool·ς₁
+--   Γ ⊢ e₂ : τ·ς₂
+--   --------------------------------
+--   Γ ⊢ while(e₁){e₂} : bool·(ς₁ V ς₂)
+
+--   Γ ⊢ e₁ : φ'
+--   Γ ⊢ e₂ : φ
+--   --------------------------------
+--   Γ ⊢ e₁;e₂ : φ
 
 typecheck :: TEnv -> Expr -> Maybe SType
 typecheck env e0 = case e0 of
@@ -522,13 +541,15 @@ typecheck env e0 = case e0 of
         else Nothing
       _ -> Nothing
     _ -> Nothing
---  WhileE e1 e2 -> case typecheck env e1 of
---    Just (ST BoolT l1) -> case typecheck env e2 of
---    _ -> Nothing
+  WhileE e1 e2 -> case typecheck env e1 of
+    Just (ST BoolT l1) -> case typecheck env e2 of
+      Just (ST _ l2) -> Just (ST BoolT (joinLabel l1 l2))
+      _ -> Nothing
+    _ -> Nothing
 
 interpTests :: (Int,String,Expr -> Maybe (Value,Store),[(Expr,Maybe (Value,Store))])
 interpTests =
-  let cds = 
+  let cds =
         -- CLASS Object
         --   FIELDS hash
         --   ~
@@ -557,9 +578,9 @@ interpTests =
         --   METHOD getY(_) ⇒ this.y
         --   METHOD setX(x) ⇒ this.x ← x
         --   METHOD setY(y) ⇒ this.y ← y
-        --   METHOD mdist(_) ⇒ this.getX(0) + this.getY(0) 
+        --   METHOD mdist(_) ⇒ this.getX(0) + this.getY(0)
         , CDecl "Point2D" ["Object"]
-                ["x","y"] 
+                ["x","y"]
                 [ MDecl "getX" "_" (GetFieldE (VarE "this") "x")
                 , MDecl "getY" "_" (GetFieldE (VarE "this") "y")
                 , MDecl "setX" "x" (SetFieldE (VarE "this") "x" (VarE "x"))
@@ -572,7 +593,7 @@ interpTests =
         --   ~
         --   METHOD getZ(_) ⇒ this.z
         --   METHOD setZ(z) ⇒ this.z ← z
-        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0) 
+        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0)
         , CDecl "Point3D" ["Point2D"]
                 ["z"]
                 [ MDecl "getZ" "_" (GetFieldE (VarE "this") "z")
@@ -587,7 +608,7 @@ interpTests =
         --   ~
         --   METHOD getZ(_) ⇒ this.z
         --   METHOD setZ(z) ⇒ this.z ← z
-        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0) 
+        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0)
         --   METHOD getNotB(_) ⇒ LET b = IBool.getB IN IF b THEN False Else True
         , CDecl "Point3DBool" ["Point2D", "ABool"]
                 ["z"]
@@ -725,7 +746,32 @@ typecheckTests =
     ,
     -- Same as above, but with type mismatch
     -- let f = (fun x:int,pub -> x + 10) in f(false)
-    ( LetE "f" (FunE "x" (ST IntT Public) (PlusE (VarE "x") (IntE 10))) (AppE (VarE "f") (BoolE False)) , Nothing) ]
+    ( LetE "f" (FunE "x" (ST IntT Public) (PlusE (VarE "x") (IntE 10))) (AppE (VarE "f") (BoolE False))
+    , Nothing
+    )
+    -- LET b1 = BOX:public true IN
+    -- LET b2 = BOX:pulic 3 IN
+    -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
+   ,( LetE "b1" (BoxE (BoolE True) Public) $
+      LetE "b2" (BoxE (IntE 3) Public) $
+      WhileE (UnboxE (VarE "b1")) $
+        seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
+        AssignE (VarE "b1") (BoolE False)
+      -- True
+    , Just (ST BoolT Public)
+    )
+    -- LET b1 = BOX:secret true IN
+    -- LET b2 = BOX:public 3 IN
+    -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
+   ,( LetE "b1" (BoxE (BoolE True) Secret) $
+      LetE "b2" (BoxE (IntE 3) Public) $
+      WhileE (UnboxE (VarE "b1")) $
+        seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
+        AssignE (VarE "b1") (BoolE False)
+      -- True
+    , Just (ST BoolT Secret)
+    )
+    ]
   )
 
 ---------------
