@@ -710,8 +710,8 @@ interpTests =
       -- ⟨v,σ⟩ = ⟨10,{0↦10,1↦3,2↦4}⟩
     , Just (BoolV False,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,BoolV True),(4,IntV 4)])
     )
-   , -- LET i = 3 IN
-     -- WHILE(i <= 20) {i ← i + 3}
+   , -- LET i = Box 3 IN
+     -- WHILE(!i <= 20) {i ← !i + 3}
     ( LetE "i" (BoxE (IntE 3) Public) $
       WhileE (IfE (EqE (UnboxE (VarE "i")) (IntE 20))
                   (BoolE True)
