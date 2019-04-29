@@ -556,7 +556,9 @@ typecheck cds env e0 = case e0 of
       _ -> Nothing
     _ -> Nothing
   NewE cn es -> case lookupClass cds cn of
-    Just cd -> Just (ST (ObjectT cn) Public)
+    Just cd -> case newFieldCheck cds env cd es of
+      True -> Just (ST (ObjectT cn) Public)
+      False -> Nothing
     _ -> Nothing
   GetFieldE e1 fn -> case typecheck cds env e1 of
     Just (ST (ObjectT cn) Public) -> case lookupClass cds cn of
@@ -569,7 +571,7 @@ typecheck cds env e0 = case e0 of
     Just (ST (ObjectT cn) Public) -> case lookupClass cds cn of
       Just (CDecl _ pns fds mds) -> case lookupField fds fn of
         Just (FDecl fn t1) -> case typecheck cds env e2 of
-          Just (ST t2 l) ->
+          Just (ST t2 Public) ->
             if t1==t2
             then Just (ST VoidT Public)
             else Nothing
@@ -579,16 +581,50 @@ typecheck cds env e0 = case e0 of
     _ -> Nothing
   CallE e1 mn e2 -> case typecheck cds env e1 of
     Just (ST (ObjectT cn) Public) -> case typecheck cds env e2 of
-      Just (ST t1 l1) -> case lookupClass cds cn of
+      Just (ST t1 Public) -> case lookupClass cds cn of
         Just (CDecl _ pns fds mds) -> case lookupMethod mds mn of
           Just (MDecl _ vn (MethodT t2 t3) e') ->
             if t1==t2
-            then Just (ST t2 l1)
+            then Just (ST t3 Public)
             else Nothing
           _ -> Nothing
         _ -> Nothing
       _ -> Nothing
     _ -> Nothing
+
+newFieldCheck :: [CDecl] -> TEnv -> CDecl -> [Expr] -> Bool
+newFieldCheck cds env cd es =
+  let (ts) = getAllFieldTypes cds cd in
+  let (ts') = getExprTypes cds env es in
+  compareTypeList ts ts'
+
+compareTypeList :: [Type] -> [Type] -> Bool
+compareTypeList [] [] = True
+compareTypeList [] (t':ts') = False
+compareTypeList (t:ts) [] = False
+compareTypeList (t:ts) (t':ts') = (t==t') && (compareTypeList ts ts')
+
+getAllFieldTypes :: [CDecl] -> CDecl -> [Type]
+getAllFieldTypes cds (CDecl cn [] fds mds) = case lookupClass cds cn of
+  Just cd -> getFieldTypes cds cd
+  _ -> []
+getAllFieldTypes cds (CDecl cn (p:ps) fds mds) = case lookupClass cds cn of
+  Just cd -> case lookupClass cds p of
+    Just (CDecl _ ps' _ _ ) -> case getFieldTypes cds cd of
+      ts -> ts ++ (getAllFieldTypes cds (CDecl p (ps++ps') fds mds))
+    _ -> []
+  _ -> []
+
+getFieldTypes :: [CDecl] -> CDecl -> [Type]
+getFieldTypes cds (CDecl cn [] [] mds) = []
+getFieldTypes cds (CDecl cn (_:_) [] mds) = []
+getFieldTypes cds (CDecl cn ps (FDecl _ t:fds) mds) = t:(getFieldTypes cds (CDecl cn ps fds mds))
+
+getExprTypes :: [CDecl] -> TEnv -> [Expr] -> [Type]
+getExprTypes cds env [] = []
+getExprTypes cds env (e:es) = case typecheck cds env e of
+  Just (ST t Public) -> t:(getExprTypes cds env es)
+  _ -> []
 
 lookupMethod :: [MDecl] -> MName -> Maybe MDecl
 lookupMethod [] _ = Nothing
@@ -610,8 +646,8 @@ interpTests =
         --   METHOD mdist(_) ⇒ this.hash + this.hash
         [ CDecl "Object" []
                 [ FDecl "hash" IntT]
-                [ MDecl "getHash" "_" (MethodT VoidT IntT) (GetFieldE (VarE "this") "hash")
-                , MDecl "toInt" "_" (MethodT VoidT IntT) (PlusE (GetFieldE (VarE "this") "hash")
+                [ MDecl "getHash" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "hash")
+                , MDecl "toInt" "_" (MethodT IntT IntT) (PlusE (GetFieldE (VarE "this") "hash")
                                            (GetFieldE (VarE "this") "hash"))
                 ]
         -- CLASS ABool
@@ -621,7 +657,7 @@ interpTests =
         --   METHOD mdist(_) ⇒ this.hash + this.hash
         , CDecl "ABool" []
                 [ FDecl "b" BoolT]
-                [ MDecl "getB" "_" (MethodT VoidT BoolT) (GetFieldE (VarE "this") "b")
+                [ MDecl "getB" "_" (MethodT IntT BoolT) (GetFieldE (VarE "this") "b")
                 , MDecl "setB" "b" (MethodT BoolT VoidT) (SetFieldE (VarE "this") "b" (VarE "b"))
                 ]
         -- CLASS Point2D
@@ -634,11 +670,11 @@ interpTests =
         --   METHOD mdist(_) ⇒ this.getX(0) + this.getY(0)
         , CDecl "Point2D" ["Object"]
                 [ FDecl "x" IntT, FDecl "y" IntT]
-                [ MDecl "getX" "_" (MethodT VoidT IntT) (GetFieldE (VarE "this") "x")
-                , MDecl "getY" "_" (MethodT VoidT IntT) (GetFieldE (VarE "this") "y")
-                , MDecl "setX" "x" (MethodT VoidT IntT) (SetFieldE (VarE "this") "x" (VarE "x"))
-                , MDecl "setY" "y" (MethodT VoidT IntT) (SetFieldE (VarE "this") "y" (VarE "y"))
-                , MDecl "mdist" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "this") "getX" (IntE 1))
+                [ MDecl "getX" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "x")
+                , MDecl "getY" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "y")
+                , MDecl "setX" "x" (MethodT IntT VoidT) (SetFieldE (VarE "this") "x" (VarE "x"))
+                , MDecl "setY" "y" (MethodT IntT VoidT) (SetFieldE (VarE "this") "y" (VarE "y"))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "this") "getX" (IntE 1))
                                            (CallE (VarE "this") "getY" (IntE 2)))
                 ]
         -- CLASS Point3D EXTENDS Point2D
@@ -649,9 +685,9 @@ interpTests =
         --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0)
         , CDecl "Point3D" ["Point2D"]
                 [ FDecl "z" IntT]
-                [ MDecl "getZ" "_" (MethodT VoidT IntT) (GetFieldE (VarE "this") "z")
+                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
                 , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
-                , MDecl "mdist" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
                                            (CallE (VarE "this") "getZ" (IntE 4)))
                 , MDecl "mdist2" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3))
                                             (CallE (VarE "this") "getZ" (IntE 4)))
@@ -665,11 +701,11 @@ interpTests =
         --   METHOD getNotB(_) ⇒ LET b = IBool.getB IN IF b THEN False Else True
         , CDecl "Point3DBool" ["Point2D", "ABool"]
                 [ FDecl "z" IntT]
-                [ MDecl "getZ" "_" (MethodT VoidT IntT) (GetFieldE (VarE "this") "z")
+                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
                 , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
-                , MDecl "mdist" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
                                            (CallE (VarE "this") "getZ" (IntE 4)))
-                , MDecl "getNotB" "_" (MethodT VoidT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
+                , MDecl "getNotB" "_" (MethodT IntT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
                                                 (IfE (VarE "b") (BoolE False) (BoolE True)))
                 ]
         ]
@@ -763,73 +799,37 @@ interpTests =
 typecheckTests :: (Int,String,Expr -> Maybe SType,[(Expr,Maybe SType)])
 typecheckTests =
   let cds =
-        -- CLASS Object
-        --   FIELDS hash
-        --   ~
-        --   METHOD getHash(_) ⇒ this.hash
-        --   METHOD mdist(_) ⇒ this.hash + this.hash
         [ CDecl "Object" []
                 [ FDecl "hash" IntT]
-                [ MDecl "getHash" "_" (MethodT VoidT IntT) (GetFieldE (VarE "this") "hash")
-                , MDecl "toInt" "_" (MethodT VoidT IntT) (PlusE (GetFieldE (VarE "this") "hash")
-                                           (GetFieldE (VarE "this") "hash"))
-                ]
-        -- CLASS ABool
-        --   FIELDS hash
-        --   ~
-        --   METHOD getHash(_) ⇒ this.hash
-        --   METHOD mdist(_) ⇒ this.hash + this.hash
-        , CDecl "ABool" []
-                [ FDecl "b" BoolT]
-                [ MDecl "getB" "_" (MethodT VoidT BoolT) (GetFieldE (VarE "this") "b")
-                , MDecl "setB" "b" (MethodT BoolT VoidT) (SetFieldE (VarE "this") "b" (VarE "b"))
-                ]
-        -- CLASS Point2D
-        --   FIELDS x y
-        --   ~
-        --   METHOD getX(_) ⇒ this.x
-        --   METHOD getY(_) ⇒ this.y
-        --   METHOD setX(x) ⇒ this.x ← x
-        --   METHOD setY(y) ⇒ this.y ← y
-        --   METHOD mdist(_) ⇒ this.getX(0) + this.getY(0)
+                [ MDecl "getHash" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "hash")]
         , CDecl "Point2D" ["Object"]
                 [ FDecl "x" IntT,FDecl "y" IntT]
-                [ MDecl "getX" "_" (MethodT VoidT IntT) (GetFieldE (VarE "this") "x")
-                , MDecl "getY" "_" (MethodT VoidT IntT) (GetFieldE (VarE "this") "y")
-                , MDecl "setX" "x" (MethodT VoidT IntT) (SetFieldE (VarE "this") "x" (VarE "x"))
-                , MDecl "setY" "y" (MethodT VoidT IntT) (SetFieldE (VarE "this") "y" (VarE "y"))
-                , MDecl "mdist" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "this") "getX" (IntE 1))
-                                           (CallE (VarE "this") "getY" (IntE 2)))
+                [ MDecl "getX" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "x")
+                , MDecl "getY" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "y")
+                , MDecl "setX" "x" (MethodT IntT VoidT) (SetFieldE (VarE "this") "x" (VarE "x"))
+                , MDecl "setY" "y" (MethodT IntT VoidT) (SetFieldE (VarE "this") "y" (VarE "y"))
                 ]
-        -- CLASS Point3D EXTENDS Point2D
-        --   FIELDS z
-        --   ~
-        --   METHOD getZ(_) ⇒ this.z
-        --   METHOD setZ(z) ⇒ this.z ← z
-        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0)
+        , CDecl "ABool" []
+                [ FDecl "b" BoolT]
+                [ MDecl "getB" "_" (MethodT IntT BoolT) (GetFieldE (VarE "this") "b")
+                , MDecl "setB" "b" (MethodT BoolT VoidT) (SetFieldE (VarE "this") "b" (VarE "b"))
+                ]
         , CDecl "Point3D" ["Point2D"]
                 [ FDecl "z" IntT]
-                [ MDecl "getZ" "_" (MethodT VoidT IntT) (GetFieldE (VarE "this") "z")
+                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
                 , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
-                , MDecl "mdist" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
                                            (CallE (VarE "this") "getZ" (IntE 4)))
                 , MDecl "mdist2" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3))
                                             (CallE (VarE "this") "getZ" (IntE 4)))
                 ]
-        -- CLASS Point3DBool EXTENDS Point2D,IBool
-        --   FIELDS z
-        --   ~
-        --   METHOD getZ(_) ⇒ this.z
-        --   METHOD setZ(z) ⇒ this.z ← z
-        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0)
-        --   METHOD getNotB(_) ⇒ LET b = IBool.getB IN IF b THEN False Else True
         , CDecl "Point3DBool" ["Point2D", "ABool"]
                 [ FDecl "z" IntT]
-                [ MDecl "getZ" "_" (MethodT VoidT IntT) (GetFieldE (VarE "this") "z")
+                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
                 , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
-                , MDecl "mdist" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
                                            (CallE (VarE "this") "getZ" (IntE 4)))
-                , MDecl "getNotB" "_" (MethodT VoidT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
+                , MDecl "getNotB" "_" (MethodT IntT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
                                                 (IfE (VarE "b") (BoolE False) (BoolE True)))
                 ]
         ]
@@ -874,27 +874,71 @@ typecheckTests =
     ( LetE "f" (FunE "x" (ST IntT Public) (PlusE (VarE "x") (IntE 10))) (AppE (VarE "f") (BoolE False))
     , Nothing
     )
+    ,
     -- LET b1 = BOX:public true IN
     -- LET b2 = BOX:pulic 3 IN
     -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
-   ,( LetE "b1" (BoxE (BoolE True) Public) $
+    ( LetE "b1" (BoxE (BoolE True) Public) $
       LetE "b2" (BoxE (IntE 3) Public) $
       WhileE (UnboxE (VarE "b1")) $
         seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
         AssignE (VarE "b1") (BoolE False)
-      -- True
     , Just (ST BoolT Public)
     )
+    ,
     -- LET b1 = BOX:secret true IN
     -- LET b2 = BOX:public 3 IN
     -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
-   ,( LetE "b1" (BoxE (BoolE True) Secret) $
+    ( LetE "b1" (BoxE (BoolE True) Secret) $
       LetE "b2" (BoxE (IntE 3) Public) $
       WhileE (UnboxE (VarE "b1")) $
         seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
         AssignE (VarE "b1") (BoolE False)
-      -- True
     , Just (ST BoolT Secret)
+    )
+    ,
+    -- We designate objects as strictly public entities.
+    -- Not allowed to use secret value as method argument.
+    -- LET b1 = BOX:secret true IN
+    -- LET p = New Point2D(0,1,2) IN
+    -- p.setx(!b1)
+    ( LetE "b1" (BoxE (IntE 0) Secret) $
+      LetE "p" (NewE "Point2D" [IntE 0,IntE 1,IntE 2]) $
+      CallE (VarE "p") "setX" (UnboxE (VarE "b1"))
+    , Nothing
+    )
+    ,
+    -- We designate objects as strictly public entities.
+    -- Not allowed to use secret value as initialization parameter.
+    -- LET b1 = BOX:secret true IN
+    -- LET p = New Point2D(!b1,1,2) IN
+    -- p.setx(0)
+    ( LetE "b1" (BoxE (IntE 0) Secret) $
+      LetE "p" (NewE "Point2D" [(UnboxE (VarE "b1")),IntE 1,IntE 2]) $
+      CallE (VarE "p") "setX" (IntE 0)
+    , Nothing
+    )
+    ,
+    -- Breaks no rules with public data. All Good.
+    ( LetE "b1" (BoxE (IntE 0) Public) $
+      LetE "p" (NewE "Point2D" [IntE 0,(UnboxE (VarE "b1")),IntE 2]) $
+      CallE (VarE "p") "setX" ((UnboxE (VarE "b1")))
+    , Just (ST VoidT Public)
+    )
+    ,
+    -- Incorrect Object Creation
+    ( NewE "Point2D" [IntE 1,IntE 2]
+    , Nothing
+    )
+    ,
+    -- Correct Object Creation (with 2 levels of inheritance)
+    ( NewE "Point3D" [IntE 0,IntE 1,IntE 2,IntE 3]
+    , Just (ST (ObjectT "Point3D") Public)
+    )
+    ,
+    -- Correct Object Creation (with 2 levels of inheritance, plus multiple inheritance)
+    ( NewE "Point3DBool" [IntE 0,IntE 1,IntE 2,BoolE True, IntE 3]
+    , Just (ST (ObjectT "Point3DBool") Public)
     )
     ]
   )
