@@ -968,6 +968,12 @@ typecheckTests =
     ( NewE "Point3DBool" [IntE 0,IntE 1,IntE 2,BoolE True, IntE 3]
     , Just (ST (ObjectT "Point3DBool") Public)
     )
+    ,
+    -- Type mismatch, x field has int type. Doesn't work with SetFieldE either.
+    ( LetE "p" (NewE "Point2D" [IntE 0,IntE 1,IntE 2]) $
+      CallE (VarE "p") "setX" (BoolE True)
+    , Nothing
+    )
     ]
   )
 
