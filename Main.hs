@@ -478,6 +478,7 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 --   Γ ⊢ e₁ : bool·ς₁
 --   Γ ⊢ e₂ : τ·ς₂
 --   Γ ⊢ e₃ : τ·ς₃
+--   ς₁ ≼ ς₂ = ς₃
 --   --------------------------------
 --   Γ ⊢ IF e₁ THEN e₂ ELSE e₃ : τ·(ς₁ V ς₂ V ς₃)
 
@@ -524,6 +525,7 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 --   which requires programs to terminate.
 --   Γ ⊢ e₁ : bool·ς₁
 --   Γ ⊢ e₂ : τ·ς₂
+--   ς₁ ≼ ς₂
 --   --------------------------------
 --   Γ ⊢ while(e₁){e₂} : bool·(ς₁ V ς₂)
 
@@ -533,9 +535,11 @@ meetLabel l1 l2 = if (l1==Public || l2==Public) then Public else Secret
 --   Γ ⊢ e₁;e₂ : φ
 --
 ----------------------------------------------------------
---   Objects are treated as nonsecure. Typing will fail
---   if object code touches secret data. 'Extensions'
---   are just information provided by our list of CDecls.
+--   Objects are treated as nonsecret. Typing will fail
+--   if object information directly flows into secret locations
+--   or as a result of indirect flow from conditionals on secret
+--   values. 'Extensions' are just information provided by our
+--   list of CDecls.
 --
 --   Γ ⊢ e₁ : τ₁·⊥
 --   ...
@@ -573,7 +577,7 @@ typecheck cds env e0 = case e0 of
   IfE e1 e2 e3 -> case typecheck cds env e1 of
     Just (ST BoolT l1) -> case (typecheck cds env e2, typecheck cds env e3) of
       (Just (ST t2 l2), Just (ST t3 l3)) ->
-        if t2==t3
+        if (t2==t3 && l2==l3 && l1 <= l2)
         then Just (ST t2 (joinLabel l1 (joinLabel l2 l3)))
         else Nothing
       _ -> Nothing
@@ -619,7 +623,10 @@ typecheck cds env e0 = case e0 of
     _ -> Nothing
   WhileE e1 e2 -> case typecheck cds env e1 of
     Just (ST BoolT l1) -> case typecheck cds env e2 of
-      Just (ST _ l2) -> Just (ST BoolT (joinLabel l1 l2))
+      Just (ST _ l2) ->
+        if (l1 <= l2)
+        then Just (ST BoolT (joinLabel l1 l2))
+        else Nothing
       _ -> Nothing
     _ -> Nothing
   NewE cn es -> case lookupClass cds cn of
@@ -916,6 +923,7 @@ typecheckTests =
   ,typecheck cds Map.empty
   ,[
     -- data should be designated as secret to prevent information flow leakage
+    -- technically not illegal because it has not violated non-interference.
     -- !(Box:Secret 10) + 10
     ( PlusE (UnboxE (BoxE (IntE 10) Secret)) (IntE 10)
     -- Int, Secret
@@ -963,6 +971,8 @@ typecheckTests =
     , Just (ST BoolT Public)
     )
     ,
+    -- This is indirect information flow.
+    -- Whether or not the loop happens tells us something about the secret.
     -- LET b1 = BOX:secret true IN
     -- LET b2 = BOX:public 3 IN
     -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
@@ -971,7 +981,7 @@ typecheckTests =
       WhileE (UnboxE (VarE "b1")) $
         seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
         AssignE (VarE "b1") (BoolE False)
-    , Just (ST BoolT Secret)
+    , Nothing
     )
     ,
     -- We designate objects as strictly public entities.
@@ -1022,6 +1032,12 @@ typecheckTests =
     ( LetE "p" (NewE "Point2D" [IntE 0,IntE 1,IntE 2]) $
       CallE (VarE "p") "setX" (BoolE True)
     , Nothing
+    )
+    ,
+    -- Indirect information flow from guard to branches.
+    ( LetE "b1" (BoxE (IntE 0) Secret) $
+      IfE (LtE (UnboxE (VarE "b1")) (IntE 1)) (NewE "Object" [IntE 0]) (NewE "Object" [IntE 1])
+      , Nothing
     )
     ]
   )
