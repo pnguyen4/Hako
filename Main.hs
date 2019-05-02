@@ -715,46 +715,8 @@ lookupField [] _ = Nothing
 lookupField (FDecl fn t:fds) fn' | fn == fn' = Just (FDecl fn t)
 lookupField (FDecl fn t:fds) fn' | otherwise = lookupField fds fn'
 
-interpTests :: (Int,String,Expr -> Maybe (Value,Store),[(Expr,Maybe (Value,Store))])
-interpTests =
-  let cds =
-        [ CDecl "Object" []
-                [ FDecl "hash" IntT]
-                [ MDecl "getHash" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "hash") ]
-        , CDecl "ABool" []
-                [ FDecl "b" BoolT]
-                [ MDecl "getB" "_" (MethodT IntT BoolT) (GetFieldE (VarE "this") "b")
-                , MDecl "setB" "b" (MethodT BoolT VoidT) (SetFieldE (VarE "this") "b" (VarE "b"))
-                ]
-        , CDecl "Point2D" ["Object"]
-                [ FDecl "x" IntT, FDecl "y" IntT]
-                [ MDecl "getX" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "x")
-                , MDecl "getY" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "y")
-                , MDecl "setX" "x" (MethodT IntT VoidT) (SetFieldE (VarE "this") "x" (VarE "x"))
-                , MDecl "setY" "y" (MethodT IntT VoidT) (SetFieldE (VarE "this") "y" (VarE "y"))
-                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "this") "getX" (IntE 1))
-                                                               (CallE (VarE "this") "getY" (IntE 2)))
-                ]
-        , CDecl "Point3D" ["Point2D"]
-                [ FDecl "z" IntT]
-                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
-                , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
-                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
-                                                               (CallE (VarE "this") "getZ" (IntE 4)))
-                , MDecl "mdist2" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3))
-                                                                 (CallE (VarE "this") "getZ" (IntE 4)))
-                ]
-        , CDecl "Point3DBool" ["Point2D", "ABool"]
-                [ FDecl "z" IntT]
-                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
-                , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
-                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
-                                                               (CallE (VarE "this") "getZ" (IntE 4)))
-                , MDecl "getNotB" "_" (MethodT IntT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
-                                                                     (IfE (VarE "b") (BoolE False) (BoolE True)))
-                ]
-        ]
-  in
+interpTests :: [CDecl] -> (Int,String,Expr -> Maybe (Value,Store),[(Expr,Maybe (Value,Store))])
+interpTests cds =
   (1
   ,"interp"
   ,interp cds Map.empty Map.empty
@@ -835,44 +797,8 @@ interpTests =
    ]
   )
 
-typecheckTests :: (Int,String,Expr -> Maybe SType,[(Expr,Maybe SType)])
-typecheckTests =
-  let cds =
-        [ CDecl "Object" []
-                [ FDecl "hash" IntT]
-                [ MDecl "getHash" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "hash")]
-        , CDecl "Point2D" ["Object"]
-                [ FDecl "x" IntT,FDecl "y" IntT]
-                [ MDecl "getX" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "x")
-                , MDecl "getY" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "y")
-                , MDecl "setX" "x" (MethodT IntT VoidT) (SetFieldE (VarE "this") "x" (VarE "x"))
-                , MDecl "setY" "y" (MethodT IntT VoidT) (SetFieldE (VarE "this") "y" (VarE "y"))
-                ]
-        , CDecl "ABool" []
-                [ FDecl "b" BoolT]
-                [ MDecl "getB" "_" (MethodT IntT BoolT) (GetFieldE (VarE "this") "b")
-                , MDecl "setB" "b" (MethodT BoolT VoidT) (SetFieldE (VarE "this") "b" (VarE "b"))
-                ]
-        , CDecl "Point3D" ["Point2D"]
-                [ FDecl "z" IntT]
-                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
-                , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
-                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
-                                                               (CallE (VarE "this") "getZ" (IntE 4)))
-                , MDecl "mdist2" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3))
-                                                                 (CallE (VarE "this") "getZ" (IntE 4)))
-                ]
-        , CDecl "Point3DBool" ["Point2D", "ABool"]
-                [ FDecl "z" IntT]
-                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
-                , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
-                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
-                                                               (CallE (VarE "this") "getZ" (IntE 4)))
-                , MDecl "getNotB" "_" (MethodT IntT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
-                                                                     (IfE (VarE "b") (BoolE False) (BoolE True)))
-                ]
-        ]
-  in
+typecheckTests :: [CDecl] -> (Int,String,Expr -> Maybe SType,[(Expr,Maybe SType)])
+typecheckTests cds =
   (2
   ,"typecheck"
   ,typecheck cds Map.empty
@@ -1043,8 +969,46 @@ getV loc store = case Map.lookup loc store of
 
 allTests :: [Test]
 allTests =
-  [ Test1 interpTests,
-    Test1 typecheckTests
+  let cds =
+        [ CDecl "Object" []
+                [ FDecl "hash" IntT]
+                [ MDecl "getHash" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "hash") ]
+        , CDecl "ABool" []
+                [ FDecl "b" BoolT]
+                [ MDecl "getB" "_" (MethodT IntT BoolT) (GetFieldE (VarE "this") "b")
+                , MDecl "setB" "b" (MethodT BoolT VoidT) (SetFieldE (VarE "this") "b" (VarE "b"))
+                ]
+        , CDecl "Point2D" ["Object"]
+                [ FDecl "x" IntT, FDecl "y" IntT]
+                [ MDecl "getX" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "x")
+                , MDecl "getY" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "y")
+                , MDecl "setX" "x" (MethodT IntT VoidT) (SetFieldE (VarE "this") "x" (VarE "x"))
+                , MDecl "setY" "y" (MethodT IntT VoidT) (SetFieldE (VarE "this") "y" (VarE "y"))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "this") "getX" (IntE 1))
+                                                               (CallE (VarE "this") "getY" (IntE 2)))
+                ]
+        , CDecl "Point3D" ["Point2D"]
+                [ FDecl "z" IntT]
+                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
+                , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
+                                                               (CallE (VarE "this") "getZ" (IntE 4)))
+                , MDecl "mdist2" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3))
+                                                                 (CallE (VarE "this") "getZ" (IntE 4)))
+                ]
+        , CDecl "Point3DBool" ["Point2D", "ABool"]
+                [ FDecl "z" IntT]
+                [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
+                , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
+                , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
+                                                               (CallE (VarE "this") "getZ" (IntE 4)))
+                , MDecl "getNotB" "_" (MethodT IntT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
+                                                                     (IfE (VarE "b") (BoolE False) (BoolE True)))
+                ]
+        ]
+  in
+  [ Test1 (interpTests cds)
+  , Test1 (typecheckTests cds)
   ]
 
 ----------------------
