@@ -362,12 +362,7 @@ interp cds env store e0 = case e0 of
         Just (x,t,e) ->
           let env' = mapParents (Map.fromList [("this",ObjectV (Object cn os fm mm)), (x,v)]) os
           in case os of
-            o':os' -> case interp cds (Map.insert "super" (ObjectV o') env') store'' e of
-              Just (v,store''') -> Just (v,store''')
-              Nothing -> case os' of
-                o'':_ ->
-                  interp cds (Map.insert "super" (ObjectV o'') env') store'' e
-                _ -> Nothing
+            (_:_) -> super cds env' store'' os e
             [] -> interp cds env' store'' e
         Nothing -> dispatch cds env store'' os e0
       Nothing -> Nothing
@@ -427,6 +422,14 @@ buildExprList (_:_) [] = Nothing
 buildExprList (fn:fns) (e:es) = case buildExprList fns es of
   Just (es1, es2) -> Just ((e:es1), es2)
   Nothing -> Nothing
+
+super :: [CDecl] -> Env -> Store -> [Object] -> Expr -> Maybe (Value,Store)
+super cds env store [] e = Nothing
+super cds env store (o @ (Object cn os' fm mm):os) e =
+  let env' = Map.insert "super" (ObjectV o) env
+  in case interp cds env' store e of
+    Just (v,store') -> Just (v,store')
+    Nothing -> super cds env' store os e
 
 -- Search for an inherited field or method and evaluate it.
 dispatch :: [CDecl] -> Env -> Store -> [Object] -> Expr -> Maybe (Value,Store)
