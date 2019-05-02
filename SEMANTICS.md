@@ -5,8 +5,8 @@
 ### Names
 
 ```
-x ∈ vname ≈ symbol
-cn ∈ cname ≈ symbol
+vn ∈ vname ≈ symbol ⊎ {this,super}
+cn ∈ cname ≈ symbol ⊎ {object}
 fn ∈ fname ≈ symbol
 mn ∈ mname ≈ symbol
 ```
