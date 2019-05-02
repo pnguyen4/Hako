@@ -718,35 +718,14 @@ lookupField (FDecl fn t:fds) fn' | otherwise = lookupField fds fn'
 interpTests :: (Int,String,Expr -> Maybe (Value,Store),[(Expr,Maybe (Value,Store))])
 interpTests =
   let cds =
-        -- CLASS Object
-        --   FIELDS hash
-        --   ~
-        --   METHOD getHash(_) ⇒ this.hash
-        --   METHOD mdist(_) ⇒ this.hash + this.hash
         [ CDecl "Object" []
                 [ FDecl "hash" IntT]
-                [ MDecl "getHash" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "hash")
-                , MDecl "toInt" "_" (MethodT IntT IntT) (PlusE (GetFieldE (VarE "this") "hash")
-                                           (GetFieldE (VarE "this") "hash"))
-                ]
-        -- CLASS ABool
-        --   FIELDS hash
-        --   ~
-        --   METHOD getHash(_) ⇒ this.hash
-        --   METHOD mdist(_) ⇒ this.hash + this.hash
+                [ MDecl "getHash" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "hash") ]
         , CDecl "ABool" []
                 [ FDecl "b" BoolT]
                 [ MDecl "getB" "_" (MethodT IntT BoolT) (GetFieldE (VarE "this") "b")
                 , MDecl "setB" "b" (MethodT BoolT VoidT) (SetFieldE (VarE "this") "b" (VarE "b"))
                 ]
-        -- CLASS Point2D
-        --   FIELDS x y
-        --   ~
-        --   METHOD getX(_) ⇒ this.x
-        --   METHOD getY(_) ⇒ this.y
-        --   METHOD setX(x) ⇒ this.x ← x
-        --   METHOD setY(y) ⇒ this.y ← y
-        --   METHOD mdist(_) ⇒ this.getX(0) + this.getY(0)
         , CDecl "Point2D" ["Object"]
                 [ FDecl "x" IntT, FDecl "y" IntT]
                 [ MDecl "getX" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "x")
@@ -754,134 +733,105 @@ interpTests =
                 , MDecl "setX" "x" (MethodT IntT VoidT) (SetFieldE (VarE "this") "x" (VarE "x"))
                 , MDecl "setY" "y" (MethodT IntT VoidT) (SetFieldE (VarE "this") "y" (VarE "y"))
                 , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "this") "getX" (IntE 1))
-                                           (CallE (VarE "this") "getY" (IntE 2)))
+                                                               (CallE (VarE "this") "getY" (IntE 2)))
                 ]
-        -- CLASS Point3D EXTENDS Point2D
-        --   FIELDS z
-        --   ~
-        --   METHOD getZ(_) ⇒ this.z
-        --   METHOD setZ(z) ⇒ this.z ← z
-        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0)
         , CDecl "Point3D" ["Point2D"]
                 [ FDecl "z" IntT]
                 [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
                 , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
                 , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
-                                           (CallE (VarE "this") "getZ" (IntE 4)))
+                                                               (CallE (VarE "this") "getZ" (IntE 4)))
                 , MDecl "mdist2" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3))
-                                            (CallE (VarE "this") "getZ" (IntE 4)))
+                                                                 (CallE (VarE "this") "getZ" (IntE 4)))
                 ]
-        -- CLASS Point3DBool EXTENDS Point2D,IBool
-        --   FIELDS z
-        --   ~
-        --   METHOD getZ(_) ⇒ this.z
-        --   METHOD setZ(z) ⇒ this.z ← z
-        --   METHOD mdist(_) ⇒ super.mdist(0) + this.getZ(0)
-        --   METHOD getNotB(_) ⇒ LET b = IBool.getB IN IF b THEN False Else True
         , CDecl "Point3DBool" ["Point2D", "ABool"]
                 [ FDecl "z" IntT]
                 [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
                 , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
                 , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
-                                           (CallE (VarE "this") "getZ" (IntE 4)))
+                                                               (CallE (VarE "this") "getZ" (IntE 4)))
                 , MDecl "getNotB" "_" (MethodT IntT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
-                                                (IfE (VarE "b") (BoolE False) (BoolE True)))
+                                                                     (IfE (VarE "b") (BoolE False) (BoolE True)))
                 ]
         ]
   in
   (1
   ,"interp"
   ,interp cds Map.empty Map.empty
-  -- in each test: interp(e) = ⟨v,σ⟩
-  --
-  ,[
-    -- e = LET x = BOX 10 IN !x
-    ( LetE "x" (BoxE (IntE 10) Public) (VarE "x")
-    , Just (LocV 0,Map.fromList [(0,IntV 10)])
-    )
-    -- e = LET x = BOX false IN
-    --     LET y = BOX 20 IN
-    --     IF (x ← true) THEN !x ELSE (y ← 100))
-   ,( LetE "x" (BoxE (BoolE False) Public)
-      (LetE "y" (BoxE (IntE 20) Public)
-      (IfE (AssignE (VarE "x") (BoolE True))
-           (UnboxE (VarE "x"))
-           (AssignE (VarE "y") (IntE 100))))
-    , Just (BoolV True,Map.fromList [(0,BoolV True),(1,IntV 20)])
-    )
-    -- LET f = FUN (x) → x + 1 IN
-    -- f(2)
-   ,( LetE "f" (FunE "x" (ST IntT Public) (PlusE (IntE 1) (VarE "x"))) $
-      AppE (VarE "f") (IntE 2)
-      -- 3
-    , Just (IntV 3,Map.empty)
-    )
-    -- LET b1 = BOX true IN
-    -- LET b2 = BOX 3 IN
-    -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
-   ,( LetE "b1" (BoxE (BoolE True) Public) $
-      LetE "b2" (BoxE (IntE 3) Public) $
-      WhileE (UnboxE (VarE "b1")) $
-        seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
-        AssignE (VarE "b1") (BoolE False)
-      -- True
-    , Just (BoolV True,Map.fromList [(0,BoolV False),(1,IntV 9)])
-    )
-   , -- LET p = new Point3D(0,2,3,4) IN
-     -- p.mdist(0)
-    ( LetE "p" (NewE "Point3D" [IntE 0,IntE 2,IntE 3,IntE 4]) $
-      CallE (VarE "p") "mdist" (IntE 0)
-      -- ⟨v,σ⟩ = ⟨9,{0↦0,1↦2,2↦3,3↦4}⟩
-    , Just (IntV 9,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,IntV 4)])
-    )
-   , -- LET p = new Point3D(2,3,4) IN
-     -- p.mdist2(0)
-    ( LetE "p" (NewE "Point3D" [IntE 0,IntE 2,IntE 3,IntE 4]) $
-      CallE (VarE "p") "mdist2" (IntE 0)
-      -- ⟨v,σ⟩ = ⟨9,{0↦0,1↦2,2↦3,3↦4}⟩
-    , Just (IntV 9,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,IntV 4)])
-    )
-   , -- LET p = new Point3D(0,2,3,4) IN
-     -- p.getX(0)
-    ( LetE "p" (NewE "Point3D" [IntE 0,IntE 2,IntE 3,IntE 4]) $
-      (CallE (VarE "p") "getX" (IntE 0))
-      -- ⟨v,σ⟩ = ⟨2,{0↦2,1↦3,2↦4}⟩
-    , Just (IntV 2,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,IntV 4)])
-    )
-   , -- LET p = new Point3D(0,2,3,4) IN
-     -- p.x ← 10
-     -- p.x
-    ( LetE "p" (NewE "Point3D" [IntE 0,IntE 2,IntE 3,IntE 4]) $
-      seqE (SetFieldE (VarE "p") "x" (IntE 10)) (GetFieldE (VarE "p") "x")
-      -- ⟨v,σ⟩ = ⟨10,{0↦10,1↦3,2↦4}⟩
-    , Just (IntV 10,Map.fromList [(0,IntV 0),(1,IntV 10),(2,IntV 3),(3,IntV 4)])
-    )
-   , -- LET p = new Point3DBool(0,2,3,True,4) IN
-     -- p.x ← 10
-     -- p.x
-    ( LetE "p" (NewE "Point3DBool" [IntE 0,IntE 2,IntE 3,BoolE True,IntE 4]) $
-      CallE (VarE "p") "getB" (IntE 0)
-      -- ⟨v,σ⟩ = ⟨10,{0↦10,1↦3,2↦4}⟩
-    , Just (BoolV True,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,BoolV True),(4,IntV 4)])
-    )
-   , -- LET p = new Point3DBool(0,2,3,True,4) IN
-     -- p.x ← 10
-     -- p.x
-    ( LetE "p" (NewE "Point3DBool" [IntE 0,IntE 2,IntE 3,BoolE True,IntE 4]) $
-      CallE (VarE "p") "getNotB" (IntE 0)
-      -- ⟨v,σ⟩ = ⟨10,{0↦10,1↦3,2↦4}⟩
-    , Just (BoolV False,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,BoolV True),(4,IntV 4)])
-    )
+  ,[ -- e = LET x = BOX false IN
+     --     LET y = BOX 20 IN
+     --     IF (x ← true) THEN !x ELSE (y ← 100))
+   ( LetE "x" (BoxE (BoolE False) Public) $
+     LetE "y" (BoxE (IntE 20) Public) $
+     IfE (AssignE (VarE "x") (BoolE True))
+         (UnboxE (VarE "x"))
+         (AssignE (VarE "y") (IntE 100))
+   , Just (BoolV True,Map.fromList [(0,BoolV True),(1,IntV 20)])
+   )
+   , -- LET b1 = BOX true IN
+     -- LET b2 = BOX 3 IN
+     -- LOOP !b1 { b2 ← !b2 * !b2 ; b1 ← false }
+   ( LetE "b1" (BoxE (BoolE True) Public) $
+     LetE "b2" (BoxE (IntE 3) Public) $
+     WhileE (UnboxE (VarE "b1")) $
+       seqE (AssignE (VarE "b2") (TimesE (UnboxE (VarE "b2")) (UnboxE (VarE "b2")))) $
+       AssignE (VarE "b1") (BoolE False)
+     -- True
+   , Just (BoolV True,Map.fromList [(0,BoolV False),(1,IntV 9)])
+   )
    , -- LET i = Box 3 IN
      -- WHILE(!i <= 20) {i ← !i + 3}
-    ( LetE "i" (BoxE (IntE 3) Public) $
-      WhileE (IfE (EqE (UnboxE (VarE "i")) (IntE 20))
-                  (BoolE True)
-                  (IfE (LtE (UnboxE (VarE "i")) (IntE 20)) (BoolE True) (BoolE False))) $
-             (AssignE (VarE "i") (PlusE (UnboxE (VarE "i")) (IntE 3)))
-      -- True
-    , Just (BoolV True,Map.fromList [(0,IntV 21)])
-    )
+   ( LetE "i" (BoxE (IntE 3) Public) $
+     WhileE (IfE (EqE (UnboxE (VarE "i")) (IntE 20))
+                 (BoolE True)
+                 (IfE (LtE (UnboxE (VarE "i")) (IntE 20)) (BoolE True) (BoolE False))) $
+            (AssignE (VarE "i") (PlusE (UnboxE (VarE "i")) (IntE 3)))
+     -- True
+   , Just (BoolV True,Map.fromList [(0,IntV 21)])
+   )
+   , -- LET p = new Point3D(0,2,3,4) IN
+     -- p.mdist(0)
+   ( LetE "p" (NewE "Point3D" [IntE 0,IntE 2,IntE 3,IntE 4]) $
+     CallE (VarE "p") "mdist" (IntE 0)
+     -- ⟨v,σ⟩ = ⟨9,{0↦0,1↦2,2↦3,3↦4}⟩
+   , Just (IntV 9,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,IntV 4)])
+   )
+   , -- LET p = new Point3D(2,3,4) IN
+     -- p.mdist2(0)
+   ( LetE "p" (NewE "Point3D" [IntE 0,IntE 2,IntE 3,IntE 4]) $
+     CallE (VarE "p") "mdist2" (IntE 0)
+     -- ⟨v,σ⟩ = ⟨9,{0↦0,1↦2,2↦3,3↦4}⟩
+   , Just (IntV 9,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,IntV 4)])
+   )
+   , -- LET p = new Point3D(0,2,3,4) IN
+     -- p.getX(0)
+   ( LetE "p" (NewE "Point3D" [IntE 0,IntE 2,IntE 3,IntE 4]) $
+     (CallE (VarE "p") "getX" (IntE 0))
+     -- ⟨v,σ⟩ = ⟨2,{0↦2,1↦3,2↦4}⟩
+   , Just (IntV 2,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,IntV 4)])
+   )
+   , -- LET p = new Point3D(0,2,3,4) IN
+     -- p.x ← 10
+     -- p.x
+   ( LetE "p" (NewE "Point3D" [IntE 0,IntE 2,IntE 3,IntE 4]) $
+     seqE (SetFieldE (VarE "p") "x" (IntE 10)) (GetFieldE (VarE "p") "x")
+     -- ⟨v,σ⟩ = ⟨10,{0↦10,1↦3,2↦4}⟩
+   , Just (IntV 10,Map.fromList [(0,IntV 0),(1,IntV 10),(2,IntV 3),(3,IntV 4)])
+   )
+   , -- LET p = new Point3DBool(0,2,3,True,4) IN
+     -- p.getB(0)
+   ( LetE "p" (NewE "Point3DBool" [IntE 0,IntE 2,IntE 3,BoolE True,IntE 4]) $
+     CallE (VarE "p") "getB" (IntE 0)
+     -- ⟨v,σ⟩ = ⟨True,{0↦0,1↦2,2↦3,3↦True,4↦4}⟩
+   , Just (BoolV True,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,BoolV True),(4,IntV 4)])
+   )
+   , -- LET p = new Point3DBool(0,2,3,True,4) IN
+     -- p.getNotB(0)
+   ( LetE "p" (NewE "Point3DBool" [IntE 0,IntE 2,IntE 3,BoolE True,IntE 4]) $
+     CallE (VarE "p") "getNotB" (IntE 0)
+     -- ⟨v,σ⟩ = ⟨True,{0↦0,1↦2,2↦3,3↦True,4↦4}⟩
+   , Just (BoolV False,Map.fromList [(0,IntV 0),(1,IntV 2),(2,IntV 3),(3,BoolV True),(4,IntV 4)])
+   )
    ]
   )
 
@@ -908,18 +858,18 @@ typecheckTests =
                 [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
                 , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
                 , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
-                                           (CallE (VarE "this") "getZ" (IntE 4)))
+                                                               (CallE (VarE "this") "getZ" (IntE 4)))
                 , MDecl "mdist2" "_" (MethodT VoidT IntT) (PlusE (CallE (VarE "Point2D") "mdist" (IntE 3))
-                                            (CallE (VarE "this") "getZ" (IntE 4)))
+                                                                 (CallE (VarE "this") "getZ" (IntE 4)))
                 ]
         , CDecl "Point3DBool" ["Point2D", "ABool"]
                 [ FDecl "z" IntT]
                 [ MDecl "getZ" "_" (MethodT IntT IntT) (GetFieldE (VarE "this") "z")
                 , MDecl "setZ" "z" (MethodT IntT VoidT) (SetFieldE (VarE "this") "z" (VarE "z"))
                 , MDecl "mdist" "_" (MethodT IntT IntT) (PlusE (CallE (VarE "super") "mdist" (IntE 3))
-                                           (CallE (VarE "this") "getZ" (IntE 4)))
+                                                               (CallE (VarE "this") "getZ" (IntE 4)))
                 , MDecl "getNotB" "_" (MethodT IntT BoolT) (LetE "b" (CallE (VarE "super") "getB" (IntE 0))
-                                                (IfE (VarE "b") (BoolE False) (BoolE True)))
+                                                                     (IfE (VarE "b") (BoolE False) (BoolE True)))
                 ]
         ]
   in
