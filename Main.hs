@@ -869,7 +869,6 @@ main :: IO ()
 main = do
   runTests allTests
   testInterference
-  interpDemo
 
 ----------------------------
 -- TESTING INFRASTRUCTURE --
