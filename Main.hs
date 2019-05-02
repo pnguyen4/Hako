@@ -918,7 +918,7 @@ typecheckTests =
                 ]
         ]
   in
-  (1
+  (2
   ,"typecheck"
   ,typecheck cds Map.empty
   ,[
@@ -1042,6 +1042,46 @@ typecheckTests =
     ]
   )
 
+testInterference :: IO()
+testInterference = do
+  traceInterference 0 2 3 (AssignE (VarE "hi") (UnboxE (VarE "low")))
+-- M1 = { low ↦ 0 , hi ↦ 2 }, M2 = { low ↦ 0 , hi ↦ 3 }
+-- e = (low := !hi)
+  traceInterference 0 2 3 (AssignE (VarE "low") (UnboxE (VarE "hi")))
+-- M1 = { low ↦ 0 , hi ↦ 2 }, M2 = { low ↦ 0 , hi ↦ 3 }
+-- e ≜ if (!hi = 3) then low := 1 else low :=2
+  traceInterference 0 2 3 (IfE (EqE (UnboxE (VarE "hi")) (IntE 3)) (AssignE (VarE "low") (IntE 1)) (AssignE (VarE "low") (IntE 2)))
+-- M1 = { low ↦ 0 , hi ↦ 0 }, M2 = { low ↦ 0 , hi ↦ 1 }
+-- e ≜ while (!hi < 0) { low := 8; hi := !hi + 1 }
+  traceInterference 0 0 1 (WhileE (LtE (UnboxE (VarE "hi")) (IntE 1)) $
+        seqE (AssignE (VarE "low") (IntE 8)) $
+        AssignE (VarE "hi") (PlusE (IntE 1) (UnboxE (VarE "hi"))))
+
+-- Δ = { low ↦ int·Public , hi ↦ int·Secret }
+--                 M1 & M2 Low   M1 hi      M2 hi
+--                    vvvvv      vvvvv      vvvvv
+traceInterference :: Integer -> Integer -> Integer -> Expr -> IO()
+traceInterference low hi1 hi2 e' =
+  let e1 = LetE "low" (BoxE (IntE low) Public) $ LetE "hi" (BoxE (IntE hi1) Secret) (e') in
+  let e2 = LetE "low" (BoxE (IntE low) Public) $ LetE "hi" (BoxE (IntE hi2) Secret) (e') in
+  case (interp [] Map.empty Map.empty e1, interp [] Map.empty Map.empty e2) of
+  (Just (_,s1), Just (_,s2)) -> do
+    putStrLn ""
+    putStr $ "Input: M1 = {low -> " ++ show low ++ ", hi -> " ++ show hi1 ++ "}, "
+    putStrLn $ "M2 = {low -> " ++ show low ++ ", hi -> " ++ show hi2 ++ "}"
+    putStrLn $ "Expr: " ++ show e'
+    putStr $ "Output: M1' = {low -> " ++ show (getV 0 s1) ++ ", hi -> " ++ show (getV 1 s1) ++ "}, "
+    putStrLn $ "M2' = {low -> " ++ show (getV 0 s2) ++ ", hi -> " ++ show (getV 1 s2) ++ "}"
+    if (getV 0 s1) == (getV 0 s2)
+    then putStrLn "Secure: change in secret input does not affect public output. Typing should succeed"
+    else putStrLn "Not Secure: change in secret input affects public output. Typing Should Fail."
+  _ -> putStrLn "Expression invalid."
+
+getV :: Loc -> Store -> Integer
+getV loc store = case Map.lookup loc store of
+  Just (IntV v) -> v
+  _ -> 0
+
 ---------------
 -- ALL TESTS --
 ---------------
@@ -1057,7 +1097,9 @@ allTests =
 ----------------------
 
 main :: IO ()
-main = runTests allTests
+main = do
+  runTests allTests
+  testInterference
 
 ----------------------------
 -- TESTING INFRASTRUCTURE --
