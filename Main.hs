@@ -9,6 +9,7 @@ import Data.List          -- used in testing infrastructure
 import Control.Monad      -- used in testing infrastructure
 import Control.Exception  -- used in testing infrastructure
 import System.IO          -- used in testing infrastructure
+import System.Random
 
 import qualified Debug.Trace as Debug
 
@@ -1026,6 +1027,72 @@ typecheckTests =
     ]
   )
 
+
+interpDemo :: IO()
+interpDemo = do
+  g0 <- newStdGen
+  let (rd, g1) = randomR (1,10) g0
+  let (rn, _) = randomR (1,2) g1
+  let cds =
+        [ -- CLASS IAttack
+          --   FIELDS ∅
+          --   ~
+          --   METHOD doDamage(x) ⇒ x * randomRIO(1,x)
+          --   METHOD mdist(_) ⇒ this.hash + this.hash
+          CDecl "IAttacker" []
+                []
+                [ MDecl "doDamage" "x" (MethodT IntT IntT) (TimesE (VarE "x") (IntE rd)) ]
+        -- CLASS Monster
+        --   FIELDS health power
+        --   ~
+        --   METHOD getHealth(_) ⇒ this.health
+        --   METHOD getPower(_) ⇒ this.power
+        --   METHOD setHealth(h) ⇒ this.health ← h
+        , CDecl "Monster" []
+                [ FDecl "health" IntT, FDecl "power" IntT]
+                [ MDecl "getHealth" "_" (MethodT IntT VoidT) (GetFieldE (VarE "this") "health")
+                , MDecl "setHealth" "h" (MethodT IntT VoidT) (SetFieldE (VarE "this") "health" (VarE "h"))
+                , MDecl "getPower" "_" (MethodT IntT VoidT) (GetFieldE (VarE "this") "power")
+                ]
+        -- CLASS NumMonster EXTENDS Monster IAttack
+        --   FIELDS base
+        --   ~
+        --   METHOD getVal(_) ⇒ this.val
+        --   METHOD doDamage(x) ⇒ super.doDamage(x) + this.base
+        , CDecl "NumMonster" ["Monster", "IAttacker"]
+                [ FDecl "base" IntT]
+                [ MDecl "getBase" "_" (MethodT IntT VoidT)
+                  (GetFieldE (VarE "this") "base")
+                , MDecl "doDamage" "_" (MethodT IntT IntT)
+                  (LetE "dmg" (CallE (VarE "super") "doDamage"
+                                     (GetFieldE (VarE "this") "power")) $
+                   TimesE (VarE "dmg") (GetFieldE (VarE "this") "base"))
+                ]
+        ]
+  let expr = 
+        LetE "dec" (NewE "NumMonster" [IntE 100,IntE 10,IntE 10]) $
+        LetE "bin" (NewE "NumMonster" [IntE 100,IntE 2,IntE 2]) $
+        LetE "chkHealth" (FunE "_" (ST IntT Public) (IfE (LtE (CallE (VarE "dec") "getHealth" (IntE 0)) (IntE 0))
+                                                     (BoolE False)
+                                                     (IfE (LtE (CallE (VarE "bin") "getHealth" (IntE 0)) (IntE 0))
+                                                               (BoolE False)
+                                                               (BoolE True)))) $
+        seqE (WhileE (AppE (VarE "chkHealth") (IntE 0))
+                 (LetE "rand" (IntE rn) $
+                 (LetE "atkr" (IfE (EqE (VarE "rand") (IntE 1)) (VarE "dec") (VarE "bin")) $
+                 (LetE "defr" (IfE (EqE (VarE "rand") (IntE 1)) (VarE "bin") (VarE "dec")) $
+                 (CallE (VarE "defr") "setHealth" (PlusE (CallE (VarE "defr") "getHealth" (IntE 0))
+                                                         (TimesE (IntE (-1)) (CallE (VarE "atkr") "doDamage" (IntE 0)))))))))
+             (IfE (GtE (CallE (VarE "dec") "getHealth" (IntE 0)) (IntE 0))
+                  (CallE (VarE "dec") "getBase" (IntE 0))
+                  (CallE (VarE "bin") "getBase" (IntE 0)))
+  case interp cds Map.empty Map.empty expr of
+    Just (IntV i,_) -> do
+      putStrLn ""
+      putStrLn $ "Demo output: Base " ++ show i ++ " won!"
+      putStrLn ""
+    _ -> putStrLn "Demo failed."
+
 ---------------
 -- ALL TESTS --
 ---------------
@@ -1041,7 +1108,9 @@ allTests =
 ----------------------
 
 main :: IO ()
-main = runTests allTests
+main = do
+  runTests allTests
+  interpDemo
 
 ----------------------------
 -- TESTING INFRASTRUCTURE --
