@@ -336,35 +336,35 @@ interp cds env store e0 = case e0 of
       _ -> Nothing
     _ -> Nothing
   NewE cn es -> case lookupClass cds cn of
-    Just cd @ (CDecl _ pns fns mds) -> case initMany cds env store pns es of
+    Just cd @ (CDecl _ pns _ _) -> case initMany cds env store pns es of
       Just (res,ps,store') -> case new cds env store' cd res of
         Just (ObjectV (Object _ _ fm mm),store'') -> Just (ObjectV (Object cn ps fm mm),store'')
         _ -> Nothing
       Nothing -> Nothing
     Nothing -> Nothing
   GetFieldE e fn -> case interp cds env store e of
-    Just (ObjectV (Object _ os fm _),store') -> case Map.lookup fn fm of
+    Just (ObjectV (Object _ ps fm _),store') -> case Map.lookup fn fm of
       Just (l,t) -> case Map.lookup l store' of
         Just v -> Just (v,store')
         Nothing -> Nothing
-      Nothing -> dispatch cds env store' os e0
+      Nothing -> dispatch cds env store' ps e0
     _ -> Nothing
   SetFieldE e1 fn e2 -> case interp cds env store e1 of
-    Just (ObjectV (Object _ os fm _),store') -> case interp cds env store' e2 of
+    Just (ObjectV (Object _ ps fm _),store') -> case interp cds env store' e2 of
       Just (v,store'') -> case Map.lookup fn fm of
         Just (l,t) -> Just (v,Map.insert l v store'')
-        Nothing -> dispatch cds env store' os e0
+        Nothing -> dispatch cds env store' ps e0
       Nothing -> Nothing
     _ -> Nothing
   CallE e1 mn e2 -> case interp cds env store e1 of
-    Just (ObjectV (Object cn os fm mm),store') -> case interp cds env store' e2 of
+    Just (ObjectV (Object cn ps fm mm),store') -> case interp cds env store' e2 of
       Just (v,store'') -> case Map.lookup mn mm of
         Just (x,t,e) ->
-          let env' = mapParents (Map.fromList [("this",ObjectV (Object cn os fm mm)), (x,v)]) os
-          in case os of
-            (_:_) -> super cds env' store'' os e
+          let env' = mapNames (Map.fromList [("this",ObjectV (Object cn ps fm mm)), (x,v)]) ps
+          in case ps of
+            (_:_) -> super cds env' store'' ps e
             [] -> interp cds env' store'' e
-        Nothing -> dispatch cds env store'' os e0
+        Nothing -> dispatch cds env store'' ps e0
       Nothing -> Nothing
     _ -> undefined
 
@@ -379,7 +379,7 @@ interpMany cds env store (e:es) = case interp cds env store e of
 
 -- Create values in the store.
 new :: [CDecl] -> Env -> Store -> CDecl -> [Expr] -> Maybe (Value,Store)
-new cds env store (CDecl cn pns fns mds) es = case interpMany cds env store es of
+new cds env store (CDecl cn _ fns mds) es = case interpMany cds env store es of
   Just (vs,store') ->
     let (ls,store'') = allocMany store' vs
         mm = buildMethodMap mds
@@ -407,11 +407,11 @@ initMany cds env store (cn:cns) es = case lookupClass cds cn of
     Nothing -> Nothing
   Nothing -> Nothing
 
--- Map the class name with the parent object
-mapParents :: Env -> [Object] -> Env
-mapParents env [] = env
-mapParents env (o @ (Object cn _ _ _):os) =
-  mapParents (Map.insert cn (ObjectV o) env) os
+-- Map the class name with the object in the environment
+mapNames :: Env -> [Object] -> Env
+mapNames env [] = env
+mapNames env (o @ (Object cn _ _ _):os) =
+  mapNames (Map.insert cn (ObjectV o) env) os
 
 -- Decide a subset of a list of expressions that should correspond to a field
 -- list. Returns a tuple of expressions: the first is the corresponding
@@ -423,18 +423,20 @@ buildExprList (fn:fns) (e:es) = case buildExprList fns es of
   Just (es1, es2) -> Just ((e:es1), es2)
   Nothing -> Nothing
 
+-- searches for a valid result from a list of objects in evaluating an
+-- expression using 'super'
 super :: [CDecl] -> Env -> Store -> [Object] -> Expr -> Maybe (Value,Store)
-super cds env store [] e = Nothing
-super cds env store (o @ (Object cn os' fm mm):os) e =
+super cds env store [] e0 = Nothing
+super cds env store (o:os) e0 =
   let env' = Map.insert "super" (ObjectV o) env
-  in case interp cds env' store e of
+  in case interp cds env' store e0 of
     Just (v,store') -> Just (v,store')
-    Nothing -> super cds env' store os e
+    Nothing -> super cds env' store os e0
 
 -- Search for an inherited field or method and evaluate it.
 dispatch :: [CDecl] -> Env -> Store -> [Object] -> Expr -> Maybe (Value,Store)
 dispatch cds env store [] e0 = Nothing
-dispatch cds env store (o @ (Object cn os' fm mm):os) e0 =
+dispatch cds env store (o @ (Object _ ps _ _):os) e0 =
   let env' = Map.insert "this" (ObjectV o) env
       e0' = case e0 of
         GetFieldE e fn -> GetFieldE (VarE "this") fn
@@ -443,7 +445,7 @@ dispatch cds env store (o @ (Object cn os' fm mm):os) e0 =
         _ -> e0
   in case interp cds env' store e0' of
     Just (v,store') -> Just (v,store')
-    Nothing -> case dispatch cds env' store os' e0 of
+    Nothing -> case dispatch cds env' store ps e0 of
       Just (v,store') -> Just (v,store')
       Nothing -> dispatch cds env' store os e0
 
